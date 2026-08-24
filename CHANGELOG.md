@@ -609,10 +609,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   surface, frozen back radiation, flipped latent sign — each break the gates
   that claim them.
 
+### Added — Phase 1 (F1.5 stage 1, depth-varying plan area)
+
+- `LayeredMesh::setHypsography()`: a per-column plan area that varies with
+  elevation, so cell volumes and the volume-elevation curve reflect a real
+  water body rather than a prism.
+- **Why it matters, measured on DeGray's actual bathymetry:** the deepest
+  section runs from 6418 m wide at the surface to 75 m at the bed, a ratio of
+  85, and a prism on surface area overstates the reservoir's volume by
+  **2.07x** — 3.11e9 m³ against 1.51e9. Almost all of that error is in the
+  hypolimnion, which is the water whose volume governs stratification strength
+  and oxygen depletion, so a validation built on prisms would measure the mesh
+  rather than the engine.
+- Cell volume is the **exact integral** of the piecewise-linear area curve, split
+  at every sample inside the cell. A midpoint rule is exact only where the cell
+  contains no kink, and a cell straddling a break in a surveyed curve is
+  precisely where it is not — there is a gate for that, and it fails under a
+  midpoint ablation.
+- Curves are clamped outside their samples rather than extrapolated: a linear
+  fit below the deepest sample runs the area negative.
+- A curve that widens downward is refused, because it would make the storage
+  curve non-monotone and a free surface would no longer follow uniquely from a
+  volume.
+- **Nothing changes without a curve.** A column with no hypsography produces
+  bit-for-bit its previous volumes, gated with `EXPECT_DOUBLE_EQ`, and the whole
+  existing suite is unmoved.
+
 ### Known limitations
 
 - An open boundary cannot do selective withdrawal, and its inflow composition is
   uniform over the boundary rather than specified per layer.
+
+- **Hypsography is stage 1 of 2.** The mesh's volumes are correct, but the
+  external mode still evolves *depth* on a constant plan area — the form the
+  HLLC solver and the well-balancedness proof rest on — so the two modes would
+  disagree about column storage. `InternalModeSolver::initialize()` therefore
+  refuses a hypsographic mesh outright rather than running with a silently
+  broken mass budget. Stage 2 makes the free surface evolve storage and
+  re-establishes the mode-consistency and well-balancedness gates.
 
 - Meteorology is uniform over the water body, and the atmospheric longwave uses
   Swinbank's empirical emissivity rather than a measured incoming-longwave

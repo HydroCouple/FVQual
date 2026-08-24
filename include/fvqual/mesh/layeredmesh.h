@@ -204,6 +204,74 @@ public:
         return m_cellVolume;
     }
 
+    // ── Hypsography ───────────────────────────────────────────────────────
+
+    /*!
+     * \brief Gives a column a plan area that varies with elevation (F1.5).
+     *
+     * A prism is a poor model of a reservoir. Natural water bodies narrow
+     * sharply with depth — DeGray's deepest section runs from 6.4 km wide at
+     * the surface to 75 m at the bed, a ratio of 85 — and treating the column
+     * as a prism on its surface area overstates its volume by a factor of two,
+     * almost all of it in the hypolimnion. That is exactly the water whose
+     * volume governs how strongly a reservoir stratifies and how fast its
+     * oxygen runs out.
+     *
+     * The curve is piecewise linear between the sampled elevations and is
+     * clamped outside them, so a column deeper than its table keeps its
+     * deepest area rather than extrapolating to nonsense.
+     *
+     * **Sequence.** build() first — it is what attaches the horizontal mesh
+     * these indices refer to — then a curve per column, then updateSurface() to
+     * recompute volumes with them. Applying each curve as it arrives would
+     * regenerate the whole mesh once per column, which is quadratic in a
+     * reservoir with hundreds of them.
+     *
+     * A column with no curve keeps its constant plan area from the horizontal
+     * mesh, so existing models are unaffected and get bit-for-bit their old
+     * volumes.
+     *
+     * \param[in]  column    Column index.
+     * \param[in]  elevation Sample elevations (m, positive up), increasing.
+     * \param[in]  area      Plan area at each elevation (m²), non-negative and
+     *                       non-decreasing with elevation.
+     * \param[out] message   Failure description when returning false.
+     */
+    [[nodiscard]] bool setHypsography(int64_t column, std::span<const double> elevation,
+                                      std::span<const double> area,
+                                      std::string &message);
+
+    //! Whether any column carries a hypsographic curve.
+    [[nodiscard]] bool hasHypsography() const noexcept { return m_hasHypsography; }
+
+    /*!
+     * \brief Plan area of \p column at elevation \p z (m²).
+     *
+     * The constant area from the horizontal mesh when the column has no curve.
+     */
+    [[nodiscard]] double planArea(int64_t column, double z) const;
+
+    /*!
+     * \brief Volume of \p column between two elevations (m³).
+     *
+     * The exact integral of the piecewise-linear curve, not a midpoint
+     * estimate: a cell spanning a kink in the curve would otherwise carry an
+     * error that no amount of vertical refinement removes at the kink itself.
+     */
+    [[nodiscard]] double storageBetween(int64_t column, double lower,
+                                        double upper) const;
+
+    /*!
+     * \brief Plan area at each layer interface (m²), by interface slot.
+     *
+     * What a vertical flux crosses. Equal to the column's constant area
+     * everywhere when no hypsography is set.
+     */
+    [[nodiscard]] const std::vector<double> &interfaceArea() const noexcept
+    {
+        return m_interfaceArea;
+    }
+
     /*!
      * \brief Total water depth per column (m).
      */
@@ -261,6 +329,24 @@ private:
     std::vector<double> m_interfaceZ;
     std::vector<double> m_thickness;
     std::vector<double> m_cellVolume;
+    std::vector<double> m_interfaceArea;
+
+    /*!
+     * \brief Per-column hypsographic curves, empty where a column has none.
+     *
+     * Stored as parallel elevation/area tables rather than a spline: the data
+     * arrives as samples from a bathymetric survey, and interpolating between
+     * them linearly is both what the survey means and what keeps the storage
+     * integral exact.
+     */
+    struct Hypsography
+    {
+        std::vector<double> elevation;
+        std::vector<double> area;
+    };
+
+    std::vector<Hypsography> m_hypsography;
+    bool                     m_hasHypsography = false;
     std::vector<double> m_columnDepth;
     std::vector<double> m_surfaceElevation;
 };
