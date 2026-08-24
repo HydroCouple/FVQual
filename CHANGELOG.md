@@ -293,8 +293,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ms/step, 1.36 -> 2.55 Mcell-steps/s); pressure 3.47x, transport 2.70x,
   external 1.68x.
 
+### Changed
+
+- The barotropic gather assigns the derivative arrays outright rather than
+  accumulating into them, so the per-substep `std::fill` of `m_dh`, `m_dhu`,
+  and `m_dhv` was dead work left over from the scattering version. Removed;
+  only the boundary-flux tally still needs clearing.
+
 ### Known limitations
 
+- Hoisting a single OpenMP parallel region around the barotropic substep, to
+  replace its five per-loop regions, was implemented and then **reverted**. An
+  A/B of the two binaries measured it as neutral at one thread (ratio 0.998)
+  with no usable multi-thread signal on the available hardware. It adds macros
+  and a non-obvious constraint — the affected functions must then be called
+  from inside a region — for no demonstrated benefit, so the simpler form
+  stands. Worth retrying where scaling can actually be measured.
 - Parallel scaling is measured only on a development container that exposes no
   core topology and where four threads still underperform three on some phases.
   The numbers above are indicative, not a characterisation of the code, and

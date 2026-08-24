@@ -644,9 +644,9 @@ void BarotropicSolver::accumulateFluxes()
 {
     const Mesh::HorizontalMesh &mesh = *m_mesh;
 
-    std::fill(m_dh.begin(), m_dh.end(), 0.0);
-    std::fill(m_dhu.begin(), m_dhu.end(), 0.0);
-    std::fill(m_dhv.begin(), m_dhv.end(), 0.0);
+    // Only the boundary tally needs clearing. The derivative arrays are
+    // assigned outright by the gather below, not accumulated into, so zeroing
+    // them was dead work left over from the scattering version.
     std::fill(m_boundaryFlux.begin(), m_boundaryFlux.end(), 0.0);
 
     const std::vector<double> &bed    = mesh.faceBed();
@@ -894,10 +894,10 @@ bool BarotropicSolver::step(double dt, std::string &message)
             return false;
     }
 
-    accumulateFluxes();
-
     const std::vector<double> &area   = m_mesh->faceArea();
     const bool                 source = !m_columnSource.empty();
+
+    accumulateFluxes();
 
     FVQual_PARALLEL_FOR
     for (int64_t c = 0; c < m_columnCount; ++c)

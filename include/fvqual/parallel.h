@@ -39,6 +39,7 @@
 //! Guards a single scattered update. Rare by design; see BarotropicSolver.
 #define FVQual_ATOMIC FVQual_PRAGMA(omp atomic)
 
+
 #else
 
 #define FVQual_PARALLEL_FOR
