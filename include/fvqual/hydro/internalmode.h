@@ -470,14 +470,15 @@ private:
     std::vector<double> m_cellDepth; //!< Cell-centre depth below the surface (m).
 
     /*!
-     * \brief Non-zero for each cell touching the bed.
+     * \brief Kinetics::CellPosition flags for every cell.
      *
      * Fixed for the life of the solver: the layer count does not change, so the
-     * bottom cell of each column is always the bottom cell. Built once rather
-     * than recomputed, and handed to the reaction network so it can apply
-     * benthic rate laws without knowing the mesh's indexing convention.
+     * top and bottom cells of each column are always the top and bottom cells.
+     * Built once rather than recomputed, and handed to the reaction network so
+     * it can apply scoped rate laws without knowing the mesh's indexing
+     * convention.
      */
-    std::vector<unsigned char> m_bedCell;
+    std::vector<unsigned char> m_cellPosition;
     std::vector<double> m_edgeLayerFlux;
     std::vector<double> m_verticalFlux;
     std::vector<double> m_oldVolume;

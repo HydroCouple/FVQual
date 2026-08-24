@@ -184,9 +184,16 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_kz.assign(interfaces, options.backgroundDiffusivity);
     m_cellDepth.assign(cells, 0.0);
 
-    m_bedCell.assign(cells, 0);
+    // A one-layer column is both surface and bed, and the flags say so rather
+    // than picking one — a shallow pond really does reaerate and exert sediment
+    // demand on the same water.
+    m_cellPosition.assign(cells, Kinetics::CellInterior);
     for (int64_t c = 0; c < mesh.columnCount(); ++c)
-        m_bedCell[static_cast<size_t>(mesh.cell(c, mesh.layerCount() - 1))] = 1;
+    {
+        m_cellPosition[static_cast<size_t>(mesh.cell(c, 0))] |= Kinetics::CellAtSurface;
+        m_cellPosition[static_cast<size_t>(mesh.cell(c, mesh.layerCount() - 1))] |=
+            Kinetics::CellAtBed;
+    }
 
     // Sized unconditionally, even though the march itself only runs when a rate
     // law asks for irradiance. The alternative is allocating it when the network
@@ -1316,7 +1323,7 @@ bool InternalModeSolver::step(double dt, std::string &message)
         fields.thickness = mesh.thickness();
 
         if (!m_reactions.integrate(*m_species, *m_state, m_state->cellCount(), dt,
-                                   message, fields, m_bedCell))
+                                   message, fields, m_cellPosition))
         {
             return false;
         }

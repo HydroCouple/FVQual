@@ -444,10 +444,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   profile; and direction, pinned separately because a sign error would give a
   perfectly conservative, perfectly stable, upside-down model.
 
-### Known limitations
+### Added — Phase 6 (F6.3a, surface scope)
 
-- `RateScope` has no `Surface` member yet, so surface-specific processes —
-  reaeration above all — cannot be expressed. The DO suite in F6.4 will need it.
+- `RateScope::Surface`, the mirror of `Bed` at the other end of the column, for
+  air-water exchange. It is areal without needing to be declared so: reaeration
+  is `K_L (C_sat - C)`, and m/s times g/m³ is already g/m²/s, so it reuses the
+  same areal-to-volumetric division.
+- The bed-cell mask generalises into a `CellPosition` bit field, which lets a
+  **one-layer column be both surface and bed**. That is not a degenerate case to
+  exclude — it is a shallow pond, where reaeration and sediment demand really do
+  act on the same water — and a gate pins it.
+- Gates: a surface law and a bed law on one species act at opposite ends of the
+  same column and sum in a one-layer column; surface fluxes are layer-count
+  invariant like benthic ones; and the solver places exchange at the
+  *shallowest* cell, checked against depth rather than a layer index. Ablations:
+  treating Surface as WaterColumn fails three gates, and a solver mask that
+  marks the bed as the surface fails the wiring gate.
+
+### Known limitations
 
 - The expression parser binds unary minus tighter than exponentiation, so
   `-3 ^ 2` is 9, as in Excel, rather than -9 as in Python and mathematical

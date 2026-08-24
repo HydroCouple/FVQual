@@ -125,7 +125,32 @@ enum class RateScope
      * benthic demand silently scales with the layer count, and the value looks
      * plausible either way.
      */
-    Bed
+    Bed,
+
+    /*!
+     * \brief Only in the cell touching the atmosphere, per unit **area**.
+     *
+     * The same areal treatment as Bed, at the other end of the column, and for
+     * the same reason: gas exchange is a property of the water surface. It is
+     * areal without needing to be declared so — reaeration is
+     * `K_L (C_sat - C)`, and a transfer velocity in m/s times a concentration
+     * in g/m³ is already g/m²/s.
+     */
+    Surface
+};
+
+/*!
+ * \brief Where a cell sits in its column, as a bit field.
+ *
+ * A one-layer column is both surface and bed, which is not a degenerate case
+ * to be excluded: it is a shallow pond, where reaeration and sediment demand
+ * genuinely act on the same water.
+ */
+enum CellPosition : unsigned char
+{
+    CellInterior  = 0,
+    CellAtBed     = 1 << 0,
+    CellAtSurface = 1 << 1
 };
 
 /*!
@@ -215,14 +240,14 @@ public:
      * \param[out]    message   Failure description when returning false.
      * \param[in]     fields    Engine-computed per-cell fields. Required only
      *                          for the ones the rate laws actually reference.
-     * \param[in]     bedCells  Non-zero for each cell touching the bed.
-     *                          Required only when a Bed-scope law exists.
+     * \param[in]     position  CellPosition flags per cell. Required only when
+     *                          a scoped (Bed or Surface) law exists.
      */
     [[nodiscard]] bool integrate(const State::SpeciesRegistry &registry,
                                  State::StateStore &state, int64_t cellCount, double dt,
                                  std::string &message,
                                  const DerivedFields &fields = {},
-                                 std::span<const unsigned char> bedCells = {});
+                                 std::span<const unsigned char> position = {});
 
     /*!
      * \brief Whether any rate law references the irradiance field.
@@ -231,8 +256,8 @@ public:
      */
     [[nodiscard]] bool usesLight() const noexcept;
 
-    //! Whether any rate law is Bed-scoped, and so needs the bed-cell mask.
-    [[nodiscard]] bool usesBedCells() const noexcept;
+    //! Whether any rate law is scoped, and so needs the cell-position flags.
+    [[nodiscard]] bool usesCellPosition() const noexcept;
 
     //! Number of species carrying at least one rate law.
     [[nodiscard]] int reactingCount() const noexcept

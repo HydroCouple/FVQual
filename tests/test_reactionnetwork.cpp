@@ -122,20 +122,34 @@ struct Box
 
     [[nodiscard]] int64_t cells() const { return layered.cellCount(); }
 
-    //! Non-zero for the bottom cell of every column.
-    [[nodiscard]] std::vector<unsigned char> bedMask() const
+    //! Kinetics::CellPosition flags, as the solver would supply them.
+    [[nodiscard]] std::vector<unsigned char> positions() const
     {
-        std::vector<unsigned char> mask(static_cast<size_t>(cells()), 0);
+        std::vector<unsigned char> flags(static_cast<size_t>(cells()),
+                                         FVQual::Kinetics::CellInterior);
 
         for (int64_t c = 0; c < layered.columnCount(); ++c)
-            mask[static_cast<size_t>(layered.cell(c, layered.layerCount() - 1))] = 1;
+        {
+            flags[static_cast<size_t>(layered.cell(c, 0))] |=
+                FVQual::Kinetics::CellAtSurface;
+            flags[static_cast<size_t>(layered.cell(c, layered.layerCount() - 1))] |=
+                FVQual::Kinetics::CellAtBed;
+        }
 
-        return mask;
+        return flags;
     }
 
-    [[nodiscard]] bool isBed(int64_t cell) const
+    //! Whether \p flags mark a benthic cell. Not `flags != 0`: a surface cell
+    //! carries a flag too, and conflating them would make every bed gate below
+    //! pass on the top of the column as well.
+    [[nodiscard]] static bool isBed(unsigned char flags)
     {
-        return bedMask()[static_cast<size_t>(cell)] != 0;
+        return (flags & FVQual::Kinetics::CellAtBed) != 0;
+    }
+
+    [[nodiscard]] static bool isSurface(unsigned char flags)
+    {
+        return (flags & FVQual::Kinetics::CellAtSurface) != 0;
     }
 
     //! Thickness field, as the engine would supply it.
@@ -449,9 +463,9 @@ TEST(ReactionNetwork, ABedLawTouchesOnlyTheCellAgainstTheBed)
         << message;
     ASSERT_TRUE(network.compile(box.registry, message)) << message;
 
-    EXPECT_TRUE(network.usesBedCells());
+    EXPECT_TRUE(network.usesCellPosition());
 
-    const std::vector<unsigned char> mask = box.bedMask();
+    const std::vector<unsigned char> mask = box.positions();
 
     FVQual::Kinetics::DerivedFields fields;
     fields.thickness = box.thickness();
@@ -462,7 +476,7 @@ TEST(ReactionNetwork, ABedLawTouchesOnlyTheCellAgainstTheBed)
 
     for (int64_t cell = 0; cell < box.cells(); ++cell)
     {
-        if (mask[static_cast<size_t>(cell)] != 0)
+        if (Box::isBed(mask[static_cast<size_t>(cell)]))
             EXPECT_LT(box.at(a, cell), 4.0) << "bed cell " << cell << " did not react";
         else
             EXPECT_EQ(box.at(a, cell), 4.0) << "cell " << cell << " is not on the bed";
@@ -519,7 +533,7 @@ TEST(ReactionNetwork, AnArealBedFluxRemovesTheSameMassAtAnyLayerCount)
         fields.thickness = box.thickness();
 
         ASSERT_TRUE(network.integrate(box.registry, box.state, box.cells(), dt, message,
-                                     fields, box.bedMask()))
+                                     fields, box.positions()))
             << message;
 
         // Mass lost from the whole domain, and the plan area it was lost over.
@@ -582,7 +596,7 @@ TEST(ReactionNetwork, WaterColumnAndBedLawsAddInTheBedCell)
     EXPECT_EQ(network.rateCount(), 2);
     EXPECT_EQ(network.reactingCount(), 1);
 
-    const std::vector<unsigned char> mask = box.bedMask();
+    const std::vector<unsigned char> mask = box.positions();
 
     FVQual::Kinetics::DerivedFields fields;
     fields.thickness = box.thickness();
@@ -598,7 +612,7 @@ TEST(ReactionNetwork, WaterColumnAndBedLawsAddInTheBedCell)
 
     for (int64_t cell = 0; cell < box.cells(); ++cell)
     {
-        const double exact = mask[static_cast<size_t>(cell)] != 0 ? bedExact : waterExact;
+        const double exact = Box::isBed(mask[static_cast<size_t>(cell)]) ? bedExact : waterExact;
 
         EXPECT_NEAR(box.at(a, cell), exact, 1.0e-8 * c0) << "cell " << cell;
     }
@@ -623,11 +637,11 @@ TEST(ReactionNetwork, ABedLawIsNotEvaluatedAwayFromTheBed)
     const int a = box.addSpecies("A", 0.0);
     box.allocate();
 
-    const std::vector<unsigned char> mask = box.bedMask();
+    const std::vector<unsigned char> mask = box.positions();
 
     // Zero away from the bed, where the rate law below would divide by it.
     for (int64_t cell = 0; cell < box.cells(); ++cell)
-        box.state.speciesAt(a, cell) = mask[static_cast<size_t>(cell)] != 0 ? 10.0 : 0.0;
+        box.state.speciesAt(a, cell) = Box::isBed(mask[static_cast<size_t>(cell)]) ? 10.0 : 0.0;
 
     ReactionNetwork network;
     std::string     message;
@@ -650,10 +664,194 @@ TEST(ReactionNetwork, ABedLawIsNotEvaluatedAwayFromTheBed)
 
         ASSERT_FALSE(std::isnan(value)) << "cell " << cell << " went NaN";
 
-        if (mask[static_cast<size_t>(cell)] != 0)
+        if (Box::isBed(mask[static_cast<size_t>(cell)]))
             EXPECT_LT(value, 10.0) << "bed cell " << cell << " did not react";
         else
             EXPECT_EQ(value, 0.0) << "cell " << cell << " was disturbed";
+    }
+}
+
+TEST(ReactionNetwork, ASurfaceLawActsAtTheTopAndABedLawAtTheBottom)
+{
+    // The two areal scopes on one species, at opposite ends of the same column.
+    // This is the shape every dissolved-oxygen model has: reaeration in, oxygen
+    // demand out, and nothing but water column in between.
+    constexpr double gain   = 0.3; // g/m²/s in at the surface
+    constexpr double demand = 0.2; // g/m²/s out at the bed
+    constexpr double c0     = 8.0;
+    constexpr double dt     = 5.0;
+    constexpr int    layers = 5;
+    constexpr double h      = 10.0 / static_cast<double>(layers); // Box bed at -10 m
+
+    Box box;
+    box.build(layers);
+    const int a = box.addSpecies("A", c0);
+    box.allocate();
+    box.setUniform(a, c0);
+
+    ReactionNetwork network;
+    std::string     message;
+
+    ASSERT_TRUE(network.addRate("A", "0.3", FVQual::Kinetics::RateScope::Surface,
+                                message))
+        << message;
+    ASSERT_TRUE(network.addRate("A", "0 - 0.2", FVQual::Kinetics::RateScope::Bed,
+                                message))
+        << message;
+    ASSERT_TRUE(network.compile(box.registry, message)) << message;
+
+    EXPECT_TRUE(network.usesCellPosition());
+    EXPECT_EQ(network.rateCount(), 2);
+    EXPECT_EQ(network.reactingCount(), 1);
+
+    const std::vector<unsigned char> mask = box.positions();
+
+    FVQual::Kinetics::DerivedFields fields;
+    fields.thickness = box.thickness();
+
+    ASSERT_TRUE(network.integrate(box.registry, box.state, box.cells(), dt, message,
+                                 fields, mask))
+        << message;
+
+    for (int64_t c = 0; c < box.layered.columnCount(); ++c)
+    {
+        for (int k = 0; k < layers; ++k)
+        {
+            const int64_t cell   = box.layered.cell(c, k);
+            const double  actual = box.at(a, cell);
+
+            if (k == 0)
+            {
+                // Both rates are constant, so the exact answer is linear.
+                EXPECT_NEAR(actual, c0 + gain / h * dt, 1.0e-8 * c0)
+                    << "surface cell of column " << c;
+            }
+            else if (k == layers - 1)
+            {
+                EXPECT_NEAR(actual, c0 - demand / h * dt, 1.0e-8 * c0)
+                    << "bed cell of column " << c;
+            }
+            else
+            {
+                EXPECT_EQ(actual, c0) << "interior cell " << k << " was disturbed";
+            }
+        }
+    }
+}
+
+TEST(ReactionNetwork, AOneLayerColumnIsBothSurfaceAndBed)
+{
+    // Not a degenerate case to be excluded — it is a shallow pond, where
+    // reaeration and sediment demand genuinely act on the same water. The
+    // position flags are a bit field precisely so this works rather than
+    // forcing a choice between the two.
+    constexpr double gain   = 0.5;
+    constexpr double demand = 0.2;
+    constexpr double c0     = 4.0;
+    constexpr double dt     = 2.0;
+    constexpr double h      = 10.0; // one layer over the Box's 10 m bed
+
+    Box box;
+    box.build(/*layers=*/1);
+    const int a = box.addSpecies("A", c0);
+    box.allocate();
+    box.setUniform(a, c0);
+
+    ReactionNetwork network;
+    std::string     message;
+
+    ASSERT_TRUE(network.addRate("A", "0.5", FVQual::Kinetics::RateScope::Surface,
+                                message))
+        << message;
+    ASSERT_TRUE(network.addRate("A", "0 - 0.2", FVQual::Kinetics::RateScope::Bed,
+                                message))
+        << message;
+    ASSERT_TRUE(network.compile(box.registry, message)) << message;
+
+    const std::vector<unsigned char> mask = box.positions();
+
+    ASSERT_TRUE(Box::isBed(mask[0]));
+    ASSERT_TRUE(Box::isSurface(mask[0]));
+
+    FVQual::Kinetics::DerivedFields fields;
+    fields.thickness = box.thickness();
+
+    ASSERT_TRUE(network.integrate(box.registry, box.state, box.cells(), dt, message,
+                                 fields, mask))
+        << message;
+
+    // Both act, and they sum.
+    EXPECT_NEAR(box.at(a, 0), c0 + (gain - demand) / h * dt, 1.0e-8 * c0);
+}
+
+TEST(ReactionNetwork, ASurfaceFluxIsAlsoLayerCountInvariant)
+{
+    // The areal convention applies at the surface for the same reason it does
+    // at the bed: gas exchange is a property of the water surface, so the mass
+    // it delivers per unit area must not depend on how the column is sliced.
+    constexpr double flux       = 0.04; // g/m²/s
+    constexpr double c0         = 3.0;
+    constexpr double dt         = 45.0;
+    constexpr double totalDepth = 20.0;
+
+    double previousGain = 0.0;
+
+    for (int layers : {4, 8, 16})
+    {
+        Box box;
+
+        std::string message;
+        ASSERT_TRUE(box.horizontal.build(Testing::channelStrip(3, 300.0, 40.0), message))
+            << message;
+
+        for (int64_t f = 0; f < box.horizontal.faceCount(); ++f)
+            box.horizontal.faceBed()[static_cast<size_t>(f)] = -totalDepth;
+
+        SigmaSpec spec;
+        spec.layerCount        = layers;
+        spec.minLayerThickness = 0.0;
+
+        ASSERT_TRUE(box.layered.build(box.horizontal, spec, 0.0, message)) << message;
+
+        const int a = box.addSpecies("A", c0);
+        box.allocate();
+        box.setUniform(a, c0);
+
+        ReactionNetwork network;
+
+        ASSERT_TRUE(network.addRate("A", "0.04", FVQual::Kinetics::RateScope::Surface,
+                                    message))
+            << message;
+        ASSERT_TRUE(network.compile(box.registry, message)) << message;
+
+        FVQual::Kinetics::DerivedFields fields;
+        fields.thickness = box.thickness();
+
+        ASSERT_TRUE(network.integrate(box.registry, box.state, box.cells(), dt, message,
+                                     fields, box.positions()))
+            << message;
+
+        double gained = 0.0;
+        double area   = 0.0;
+
+        for (int64_t cell = 0; cell < box.cells(); ++cell)
+        {
+            gained += (box.at(a, cell) - c0) *
+                      box.layered.cellVolume()[static_cast<size_t>(cell)];
+        }
+
+        for (int64_t c = 0; c < box.layered.columnCount(); ++c)
+            area += box.horizontal.faceArea()[static_cast<size_t>(c)];
+
+        const double perArea = gained / area;
+
+        EXPECT_NEAR(perArea, flux * dt, 1.0e-8 * flux * dt)
+            << layers << " layers gained " << perArea << " g/m²";
+
+        if (previousGain > 0.0)
+            EXPECT_NEAR(perArea, previousGain, 1.0e-8 * flux * dt);
+
+        previousGain = perArea;
     }
 }
 
@@ -678,10 +876,18 @@ TEST(ReactionNetwork, OneLawPerScopePerSpecies)
     EXPECT_TRUE(network.addRate("A", "0 - 0.3", FVQual::Kinetics::RateScope::Bed,
                                 message))
         << message;
+    EXPECT_TRUE(network.addRate("A", "0.5", FVQual::Kinetics::RateScope::Surface,
+                                message))
+        << message;
 
-    // But only once.
+    // But only once each.
     EXPECT_FALSE(network.addRate("A", "0 - 0.4", FVQual::Kinetics::RateScope::Bed,
                                  message));
+    EXPECT_FALSE(network.addRate("A", "0.6", FVQual::Kinetics::RateScope::Surface,
+                                 message));
+
+    // One species, three processes, one integrated state slot.
+    EXPECT_EQ(network.rateCount(), 3);
 }
 
 TEST(ReactionNetwork, ABedLawWithoutTheMaskOrThicknessIsRefused)
@@ -711,7 +917,7 @@ TEST(ReactionNetwork, ABedLawWithoutTheMaskOrThicknessIsRefused)
     // No thickness: the areal-to-volumetric conversion needs it, even though the
     // expression never names it.
     EXPECT_FALSE(network.integrate(box.registry, box.state, box.cells(), 1.0, message,
-                                  {}, box.bedMask()));
+                                  {}, box.positions()));
     EXPECT_NE(message.find("__THICKNESS__"), std::string::npos) << message;
 }
 
@@ -1245,6 +1451,67 @@ TEST(ReactionNetworkSolver, DepthAndThicknessComeFromTheMesh)
                     1.0e-9 * expected)
             << "layer " << k;
     }
+}
+
+TEST(ReactionNetworkSolver, TheSolverPutsSurfaceExchangeAtTheShallowestCell)
+{
+    // The mirror of the benthic wiring gate, and checked against depth for the
+    // same reason: layer 0 being the surface is a convention, and a gate written
+    // against the index would agree with a mask that had it backwards.
+    constexpr double flux       = 0.2; // g/m²/s
+    constexpr double c0         = 5.0;
+    constexpr double totalDepth = 15.0;
+    constexpr int    layers     = 5;
+    constexpr double dt         = 20.0;
+
+    Basin basin;
+    basin.suppressVerticalMixing();
+    basin.build(4, layers, 200.0, 40.0, totalDepth, uniform(12.0), uniform(c0));
+
+    std::string message;
+
+    ASSERT_TRUE(basin.solver.reactions().addRate("DYE", "0.2",
+                                                 FVQual::Kinetics::RateScope::Surface,
+                                                 message))
+        << message;
+    ASSERT_TRUE(basin.solver.compileReactions(message)) << message;
+    ASSERT_TRUE(basin.solver.step(dt, message)) << message;
+
+    for (int64_t c = 0; c < basin.layered.columnCount(); ++c)
+    {
+        int    reacted        = -1;
+        double shallowest     = 1.0e30;
+        int    shallowestLayer = -1;
+
+        for (int k = 0; k < layers; ++k)
+        {
+            const int64_t cell  = basin.layered.cell(c, k);
+            const double  value = basin.state.speciesAt(basin.dye, cell);
+            const double  depth =
+                -0.5 * (basin.layered.z(c, k) + basin.layered.z(c, k + 1));
+
+            if (depth < shallowest)
+            {
+                shallowest      = depth;
+                shallowestLayer = k;
+            }
+
+            if (std::abs(value - c0) > 1.0e-6 * c0)
+            {
+                EXPECT_EQ(reacted, -1) << "more than one cell reacted in column " << c;
+                reacted = k;
+            }
+        }
+
+        EXPECT_EQ(reacted, shallowestLayer)
+            << "column " << c << ": exchange landed at layer " << reacted
+            << " but the surface is layer " << shallowestLayer;
+    }
+
+    const double h = totalDepth / static_cast<double>(layers);
+
+    EXPECT_NEAR(basin.state.speciesAt(basin.dye, basin.layered.cell(0, 0)),
+                c0 + flux / h * dt, 1.0e-8 * c0);
 }
 
 TEST(ReactionNetworkSolver, TheSolverPutsTheBenthicFluxAtTheDeepestCell)

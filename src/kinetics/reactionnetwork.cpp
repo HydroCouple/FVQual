@@ -184,10 +184,10 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
             rate.slot = static_cast<int>(std::distance(m_reacting.begin(), existing));
         }
 
-        // A bed law is areal, and the engine divides by thickness to make it a
-        // concentration rate — so the thickness field is needed whether or not
+        // A scoped law is areal, and the engine divides by thickness to make it
+        // a concentration rate — so the thickness field is needed whether or not
         // the expression mentions it.
-        if (rate.scope == RateScope::Bed)
+        if (rate.scope != RateScope::WaterColumn)
             m_derivedUsed[DerivedThickness] = true;
 
         // Every name in the expression must resolve. An unbound name would
@@ -245,21 +245,41 @@ bool ReactionNetwork::usesLight() const noexcept
     return m_derivedUsed[DerivedLight];
 }
 
-bool ReactionNetwork::usesBedCells() const noexcept
+bool ReactionNetwork::usesCellPosition() const noexcept
 {
     for (const Rate &rate : m_rates)
     {
-        if (rate.scope == RateScope::Bed)
+        if (rate.scope != RateScope::WaterColumn)
             return true;
     }
 
     return false;
 }
 
+namespace {
+
+//! Whether \p scope applies to a cell carrying \p flags.
+[[nodiscard]] bool appliesAt(RateScope scope, unsigned char flags) noexcept
+{
+    switch (scope)
+    {
+        case RateScope::WaterColumn:
+            return true;
+        case RateScope::Bed:
+            return (flags & CellAtBed) != 0;
+        case RateScope::Surface:
+            return (flags & CellAtSurface) != 0;
+    }
+
+    return false;
+}
+
+} // namespace
+
 bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
                                 State::StateStore &state, int64_t cellCount, double dt,
                                 std::string &message, const DerivedFields &fields,
-                                std::span<const unsigned char> bedCells)
+                                std::span<const unsigned char> position)
 {
     if (m_rates.empty())
     {
@@ -285,12 +305,13 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
     const int reacting  = static_cast<int>(m_reacting.size());
     const int laws      = static_cast<int>(m_rates.size());
 
-    const bool benthic = usesBedCells();
+    const bool scoped = usesCellPosition();
 
-    if (benthic && static_cast<int64_t>(bedCells.size()) < cellCount)
+    if (scoped && static_cast<int64_t>(position.size()) < cellCount)
     {
-        message = "a rate law is bed-scoped but the bed-cell mask covers " +
-                  std::to_string(bedCells.size()) + " of " +
+        message = "a rate law is bed- or surface-scoped but the cell-position "
+                  "flags cover " +
+                  std::to_string(position.size()) + " of " +
                   std::to_string(cellCount) + " cells";
         return false;
     }
@@ -373,19 +394,20 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
         for (int r = 0; r < reacting; ++r)
             y[r] = state.speciesAt(m_reacting[static_cast<size_t>(r)], cell);
 
-        const bool atBed = !bedCells.empty() && bedCells[static_cast<size_t>(cell)] != 0;
+        const unsigned char flags =
+            position.empty() ? CellInterior : position[static_cast<size_t>(cell)];
 
-        // An areal bed rate becomes a concentration rate over the bed cell's
-        // own thickness, so the same law delivers the same mass flux however
-        // the column is layered.
+        // An areal rate — at the bed or at the surface — becomes a
+        // concentration rate over that cell's own thickness, so the same law
+        // delivers the same mass flux however the column is layered.
         //
-        // Computed for every cell, not only benthic ones, even though only
-        // benthic ones use it. An earlier version zeroed it away from the bed,
+        // Computed for every cell, not only scoped ones, even though only
+        // scoped ones use it. An earlier version zeroed it away from the bed,
         // which made it a *second* mechanism enforcing scope — and an ablation
         // showed that removing the scope check below then changed nothing, so
         // nothing was testing it. One mechanism, and it is the check.
         const double perThickness =
-            benthic ? 1.0 / derived[DerivedThickness][static_cast<size_t>(cell)] : 0.0;
+            scoped ? 1.0 / derived[DerivedThickness][static_cast<size_t>(cell)] : 0.0;
 
         // The reacting species are refreshed from the integrator's state on
         // every derivative evaluation; the rest stay frozen through the
@@ -407,13 +429,14 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
             {
                 const Rate &law = m_rates[static_cast<size_t>(l)];
 
-                if (law.scope == RateScope::Bed && !atBed)
+                if (!appliesAt(law.scope, flags))
                     continue;
 
                 const double value = evaluate_fast(law.expression, values);
 
-                rates[law.slot] +=
-                    law.scope == RateScope::Bed ? value * perThickness : value;
+                rates[law.slot] += law.scope == RateScope::WaterColumn
+                                       ? value
+                                       : value * perThickness;
             }
         };
 
