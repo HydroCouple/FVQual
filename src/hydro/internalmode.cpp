@@ -187,6 +187,7 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     // to set self-shading coefficients before compiling, and that would then
     // write into a field that does not exist yet.
     m_light.initialize(mesh, species);
+    m_solar.initialize(mesh, species);
     m_settling.initialize(species);
     m_edgeLayerFlux.assign(edgeLayers, 0.0);
     m_verticalFlux.assign(interfaces, 0.0);
@@ -1026,24 +1027,98 @@ void InternalModeSolver::applyHorizontalDiffusion(double dt, std::span<double> v
 
 void InternalModeSolver::applySurfaceHeatFlux(double dt)
 {
-    if (m_options.surfaceHeatFlux == 0.0 || m_temperatureIndex < 0)
+    if (m_temperatureIndex < 0)
         return;
 
     const Mesh::LayeredMesh &mesh  = *m_mesh;
     State::StateStore       &state = *m_state;
 
     const double capacity = m_options.referenceDensity * m_options.heatCapacity;
+    const int    layers   = mesh.layerCount();
 
+    if (!m_useMeteorology)
+    {
+        if (m_options.surfaceHeatFlux == 0.0)
+            return;
+
+        FVQual_PARALLEL_FOR
+        for (int64_t c = 0; c < mesh.columnCount(); ++c)
+        {
+            const size_t surface   = static_cast<size_t>(mesh.cell(c, 0));
+            const double thickness = mesh.thickness()[surface];
+
+            if (thickness <= 0.0)
+                continue;
+
+            state.speciesAt(m_temperatureIndex, static_cast<int64_t>(surface)) +=
+                dt * m_options.surfaceHeatFlux / (capacity * thickness);
+        }
+
+        return;
+    }
+
+    // The solar field is marched from the *penetrating* part of the net
+    // shortwave, so the irradiance it reports is energy still in transit. The
+    // absorbed energy in a cell is then the difference across it, which is what
+    // heats that cell — and is the identity LightField's own energy gate pins.
+    Kinetics::LightOptions solar;
+    solar.incidentShortwave = (1.0 - m_meteorology.albedo) * m_meteorology.shortwave;
+    solar.surfaceAbsorption = m_meteorology.surfaceAbsorption;
+    solar.backgroundAttenuation = m_solarAttenuation;
+
+    m_solar.update(mesh, state, solar);
+
+    const std::vector<double> &interface = m_solar.interfaceIrradiance();
+
+    FVQual_PARALLEL_FOR
     for (int64_t c = 0; c < mesh.columnCount(); ++c)
     {
-        const size_t surface   = static_cast<size_t>(mesh.cell(c, 0));
-        const double thickness = mesh.thickness()[surface];
+        const size_t surface = static_cast<size_t>(mesh.cell(c, 0));
 
-        if (thickness <= 0.0)
-            continue;
+        // The exchange depends on the surface temperature it is trying to set,
+        // which is the feedback that gives a water body an equilibrium at all.
+        const HeatFluxTerms terms =
+            surfaceHeatFlux(m_meteorology,
+                            state.speciesAt(m_temperatureIndex,
+                                            static_cast<int64_t>(surface)));
 
-        state.speciesAt(m_temperatureIndex, static_cast<int64_t>(surface)) +=
-            dt * m_options.surfaceHeatFlux / (capacity * thickness);
+        for (int k = 0; k < layers; ++k)
+        {
+            const size_t cell      = static_cast<size_t>(mesh.cell(c, k));
+            const double thickness = mesh.thickness()[cell];
+
+            if (thickness <= 0.0)
+                continue;
+
+            // Absorbed sunlight: what entered the top of this layer and did not
+            // leave the bottom.
+            double flux =
+                interface[static_cast<size_t>(mesh.interfaceSlot(c, k))] -
+                interface[static_cast<size_t>(mesh.interfaceSlot(c, k + 1))];
+
+            // Everything else acts at the surface: longwave both ways, latent,
+            // sensible, and the shortwave stopped in the first millimetres.
+            if (k == 0)
+                flux += terms.surfaceNet();
+
+            state.speciesAt(m_temperatureIndex, static_cast<int64_t>(cell)) +=
+                dt * flux / (capacity * thickness);
+        }
+
+        // Sunlight reaching the bed is absorbed there rather than lost. Adding
+        // it to the bottom cell keeps the energy budget closed; the alternative
+        // is a model that quietly loses heat through the floor of a shallow,
+        // clear reservoir.
+        const double toBed = interface[static_cast<size_t>(mesh.interfaceSlot(c, layers))];
+
+        const size_t bed          = static_cast<size_t>(mesh.cell(c, layers - 1));
+        const double bedThickness = mesh.thickness()[bed];
+
+        if (toBed > 0.0 && bedThickness > 0.0)
+        {
+            state.speciesAt(m_temperatureIndex, static_cast<int64_t>(bed)) +=
+                dt * toBed / (capacity * bedThickness);
+        }
     }
 }
 

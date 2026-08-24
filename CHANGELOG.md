@@ -580,10 +580,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   1.2e-2 against 1e-15; and the ambient composition read before the placement
   weights were current, evaluating to zero and importing distilled water.
 
+### Added — Phase 3 (F3.5, meteorological surface heat budget)
+
+- `FVQual::Hydro::surfaceHeatFlux()`: net shortwave with albedo, atmospheric
+  longwave with cloud correction, back radiation, latent and sensible heat, from
+  a `Meteorology` record settable each step.
+- **The flux now depends on the water temperature it is setting**, which is the
+  point. A prescribed flux has no feedback and will drive a column past boiling;
+  a computed one is self-limiting, because back radiation and evaporation both
+  rise with surface temperature. `equilibriumTemperature()` exposes where the
+  terms cancel, solved by bisection since the balance is monotone.
+- **Penetrating shortwave is a distributed source, not a surface flux.**
+  Longwave, latent and sensible exchange happen in the top millimetres; sunlight
+  does not, and the depth over which it is absorbed is what builds a thermocline.
+  The penetrating part is marched with the same Beer-Lambert code the kinetics
+  use, and the energy absorbed in a cell is the irradiance difference across it.
+  Sunlight reaching the bed is absorbed there rather than lost.
+- The solar field is kept **separate from the kinetics light field**: growth
+  responds to the photosynthetically active band and is shaded by algae, while
+  heating follows the whole spectrum through clear water. One field would force
+  a single attenuation to stand for both.
+- Inert until `enableMeteorology()`, so existing models keep their prescribed
+  `surfaceHeatFlux` unchanged — with a gate for that.
+- Gates are behavioural rather than arithmetic: the budget is self-limiting over
+  -5 to 40 °C; a shallow column reaches its equilibrium temperature from *both*
+  directions; energy entering matches the flux to 1%; sunlight warms the
+  interior with a stably ordered profile. Ablations — all shortwave to the
+  surface, frozen back radiation, flipped latent sign — each break the gates
+  that claim them.
+
 ### Known limitations
 
 - An open boundary cannot do selective withdrawal, and its inflow composition is
   uniform over the boundary rather than specified per layer.
+
+- Meteorology is uniform over the water body, and the atmospheric longwave uses
+  Swinbank's empirical emissivity rather than a measured incoming-longwave
+  record. Wind-function coefficients are exposed because they are the least
+  universal part of any heat budget and are routinely recalibrated per site.
 
 - The expression parser binds unary minus tighter than exponentiation, so
   `-3 ^ 2` is 9, as in Excel, rather than -9 as in Python and mathematical

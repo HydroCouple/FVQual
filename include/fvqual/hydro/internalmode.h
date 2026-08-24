@@ -56,6 +56,7 @@
 
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/barotropicsolver.h"
+#include "fvqual/hydro/heatbudget.h"
 #include "fvqual/hydro/pressureclosure.h"
 #include "fvqual/kinetics/lightfield.h"
 #include "fvqual/kinetics/reactionnetwork.h"
@@ -369,6 +370,51 @@ public:
     }
 
     /*!
+     * \brief Meteorological forcing driving the surface heat budget.
+     *
+     * Inert until enableMeteorology() is called, so an existing model keeps its
+     * prescribed `InternalModeOptions::surfaceHeatFlux` and nothing changes
+     * under it.
+     */
+    [[nodiscard]] Meteorology &meteorology() noexcept { return m_meteorology; }
+    [[nodiscard]] const Meteorology &meteorology() const noexcept
+    {
+        return m_meteorology;
+    }
+
+    /*!
+     * \brief Switches the surface heat flux from a prescribed value to the
+     *        meteorological budget.
+     *
+     * \param[in] attenuation Attenuation of sunlight by clear water (1/m),
+     *                        governing the depth over which the penetrating
+     *                        shortwave is absorbed — and so, more than any other
+     *                        single number here, how the model stratifies.
+     */
+    void enableMeteorology(double attenuation = 0.45) noexcept
+    {
+        m_useMeteorology   = true;
+        m_solarAttenuation = attenuation;
+    }
+
+    void disableMeteorology() noexcept { m_useMeteorology = false; }
+
+    [[nodiscard]] bool meteorologyEnabled() const noexcept { return m_useMeteorology; }
+
+    /*!
+     * \brief The solar field the heat budget last marched.
+     *
+     * Separate from light(), which serves the kinetics: photosynthesis responds
+     * to the photosynthetically active band and is shaded by algae, while
+     * heating follows the whole spectrum through clear water. Sharing one field
+     * would force one attenuation to stand for both.
+     */
+    [[nodiscard]] const Kinetics::LightField &solarField() const noexcept
+    {
+        return m_solar;
+    }
+
+    /*!
      * \brief Per-species settling velocities and their benthic destinations.
      *
      * Applied after transport and before the reactions, so a benthic rate law
@@ -559,6 +605,10 @@ private:
     Transport::SettlingSet            m_settling;
     Kinetics::ReactionNetwork         m_reactions;
     Kinetics::LightField              m_light;
+    Kinetics::LightField              m_solar;
+    Meteorology                       m_meteorology;
+    bool                              m_useMeteorology   = false;
+    double                            m_solarAttenuation = 0.45;
     Kinetics::LightOptions            m_lightOptions;
     StepProfile                       m_profile;
     std::unique_ptr<IPressureClosure> m_pressure;
