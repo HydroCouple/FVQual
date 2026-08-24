@@ -487,6 +487,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read-only, so templates can resolve names without being able to bind a network
   against the wrong registry.
 
+### Added — Phase 6 (F6.4 tier 2, the dissolved-oxygen suite)
+
+- `DissolvedOxygenTemplate`: oxygen, carbonaceous demand, ammonium, nitrate,
+  phosphate and algae, in the form QUAL2K and CE-QUAL-W2 share — reaeration at
+  the surface, CBOD decay and nitrification in the water column, sediment demand
+  at the bed, and algae that produce oxygen growing and consume it respiring.
+  Every part of Phase 6 is load-bearing here: surface and bed scopes, the light
+  field with self-shading, and settling with a benthic handoff.
+- **The stoichiometry is the point, and the budgets are how it is verified.**
+  Growth, respiration, mortality and nitrification all move nitrogen between
+  pools, and each must carry the same `g N per g algae` or the model quietly
+  manufactures nitrogen. The gates check the budgets rather than the
+  coefficients, because a budget that closes is evidence and a coefficient that
+  looks right is not.
+- **Nutrient uptake is split without a regulariser.** `NH4 / (NH4 + NO3)` is
+  0/0 in water containing neither, so the split reuses the half-saturation
+  denominator limitation already carries — `NH4 / (Ksn + NH4 + NO3)` — and the
+  two uptake terms then sum to exactly the nitrogen growth requires. Ablating
+  this to an epsilon-regularised form breaks the nitrogen budget, which is why
+  it is written this way.
+- Gates: Streeter-Phelps against its analytical deficit in a well-mixed column;
+  `DO - CBOD` conserved without exchange, which is the statement that the
+  ultimate deficit equals the initial demand; nitrification costing 4.57 g O₂
+  per g N; nitrogen and phosphorus budgets closed every step over active growth;
+  growth equal to the product of its limitation factors each computed
+  independently; and no growth in the dark, which catches a light factor
+  written upside down.
+- Deliberately absent, and documented as such rather than defaulted quietly:
+  temperature- and elevation-dependent oxygen saturation, separate organic
+  nitrogen and phosphorus pools, and Steele photoinhibition.
+- Reaeration is a **transfer velocity** (m/day), not a first-order rate (1/day).
+  A rate builds in an assumed depth, and the model would then reaerate
+  differently for no physical reason when the reservoir is drawn down.
+
 ### Known limitations
 
 - The expression parser binds unary minus tighter than exponentiation, so

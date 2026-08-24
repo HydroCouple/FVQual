@@ -456,3 +456,423 @@ TEST(Templates, MisconfigurationIsRefused)
     age.surfaceContactTime = 0.0;
     EXPECT_FALSE(age.configure(basin.solver, message));
 }
+
+// ── Dissolved oxygen suite ────────────────────────────────────────────────
+
+namespace {
+
+using FVQual::Kinetics::DissolvedOxygenTemplate;
+
+/*!
+ * \brief Builds a still basin carrying a configured DO suite.
+ *
+ * Returns by pointer because the solver is not movable, and the tests need the
+ * whole assembly to outlive the helper.
+ */
+struct Suite
+{
+    Basin                   basin;
+    DissolvedOxygenTemplate model;
+
+    int oxygen = -1, cbod = -1, ammonium = -1, nitrate = -1, phosphate = -1, algae = -1;
+
+    void build(int layers, double depth, double waterTemperature = 20.0)
+    {
+        std::string message;
+
+        ASSERT_TRUE(model.registerSpecies(basin.registry, message)) << message;
+
+        if (model.temperatureTheta != 1.0)
+            ASSERT_GE(basin.registry.addTemperature(waterTemperature, message), 0)
+                << message;
+
+        basin.build(layers, depth, waterTemperature);
+
+        oxygen = basin.solver.speciesIndex(model.oxygenId);
+        cbod   = basin.solver.speciesIndex(model.cbodId);
+
+        if (model.includeNutrients)
+        {
+            ammonium  = basin.solver.speciesIndex(model.ammoniumId);
+            nitrate   = basin.solver.speciesIndex(model.nitrateId);
+            phosphate = basin.solver.speciesIndex(model.phosphateId);
+        }
+
+        if (model.includeAlgae)
+            algae = basin.solver.speciesIndex(model.algaeId);
+
+        ASSERT_TRUE(model.configure(basin.solver, message)) << message;
+        ASSERT_TRUE(basin.solver.compileReactions(message)) << message;
+    }
+
+    //! Total nitrogen in a cell: both inorganic pools plus what the algae hold.
+    [[nodiscard]] double nitrogenAt(int k) const
+    {
+        return basin.at(ammonium, k) + basin.at(nitrate, k) +
+               model.nitrogenPerAlgae * basin.at(algae, k);
+    }
+
+    [[nodiscard]] double phosphorusAt(int k) const
+    {
+        return basin.at(phosphate, k) + model.phosphorusPerAlgae * basin.at(algae, k);
+    }
+};
+
+} // namespace
+
+TEST(DissolvedOxygen, StreeterPhelpsMatchesTheAnalyticalDeficit)
+{
+    // The classic benchmark, and the reason the suite can be trusted before any
+    // of the biology is switched on. In a well-mixed column with only
+    // carbonaceous decay and reaeration, the oxygen deficit has a closed form:
+    //
+    //   D(t) = kd L0 / (ka - kd) (e^-kd t - e^-ka t) + D0 e^-ka t
+    //
+    // A single layer, because reaeration is a surface process: in a stratified
+    // column only the top layer exchanges, and Streeter-Phelps assumes the whole
+    // depth does.
+    constexpr double depth      = 3.0;
+    constexpr double kd         = 0.3;  // 1/day
+    constexpr double velocity   = 1.5;  // m/day
+    constexpr double saturation = 9.0;
+    constexpr double l0         = 12.0;
+
+    // A small initial deficit, so the oxygen sag the gate is checking is most
+    // of what the answer contains. At d0 = 3 the curve only rose by 13% over
+    // this interval and the "the deficit actually moved" check below — which is
+    // there to stop the analytic comparison passing on a flat line — failed on
+    // the fixture rather than on the model.
+    constexpr double d0         = 1.0;
+
+    Suite suite;
+    suite.model.includeAlgae               = false;
+    suite.model.includeNutrients           = false;
+    suite.model.temperatureTheta           = 1.0;
+    suite.model.cbodDecayPerDay            = kd;
+    suite.model.reaerationVelocityPerDay   = velocity;
+    suite.model.sedimentOxygenDemandPerDay = 0.0;
+    suite.model.saturation                 = saturation;
+
+    suite.build(/*layers=*/1, depth);
+
+    suite.basin.setUniform(suite.oxygen, saturation - d0);
+    suite.basin.setUniform(suite.cbod, l0);
+
+    // The first-order reaeration coefficient this configuration implies.
+    const double ka = velocity / depth;
+
+    constexpr double dt    = 864.0;
+    constexpr int    steps = 20;
+    const double     days  = dt * steps / kSecondsPerDay;
+
+    suite.basin.run(dt, steps);
+
+    const double exact = kd * l0 / (ka - kd) * (std::exp(-kd * days) - std::exp(-ka * days)) +
+                         d0 * std::exp(-ka * days);
+
+    const double deficit = saturation - suite.basin.at(suite.oxygen, 0);
+
+    EXPECT_NEAR(deficit, exact, 1.0e-6 * saturation)
+        << "deficit " << deficit << " against " << exact;
+
+    // The CBOD itself is a plain exponential, which pins the decay coefficient
+    // separately from the reaeration.
+    EXPECT_NEAR(suite.basin.at(suite.cbod, 0), l0 * std::exp(-kd * days),
+                1.0e-7 * l0);
+
+    // And the deficit is well away from both its initial value and zero, so the
+    // gate is exercising the curve rather than an endpoint.
+    EXPECT_GT(deficit, 1.2 * d0);
+}
+
+TEST(DissolvedOxygen, OxygenMinusCarbonaceousDemandIsConservedWithoutExchange)
+{
+    // With reaeration and sediment demand off, oxidising a unit of CBOD costs
+    // exactly a unit of oxygen — so DO - CBOD is an identity of the
+    // stoichiometry. It is also the statement that the ultimate deficit equals
+    // the initial demand, which is the whole content of Streeter-Phelps.
+    Suite suite;
+    suite.model.includeAlgae               = false;
+    suite.model.includeNutrients           = false;
+    suite.model.temperatureTheta           = 1.0;
+    suite.model.cbodDecayPerDay            = 2.0;
+    suite.model.reaerationVelocityPerDay   = 0.0;
+    suite.model.sedimentOxygenDemandPerDay = 0.0;
+
+    suite.build(/*layers=*/4, 12.0);
+
+    suite.basin.setUniform(suite.oxygen, 9.0);
+    suite.basin.setUniform(suite.cbod, 5.0);
+
+    const double invariant = 9.0 - 5.0;
+
+    for (int i = 0; i < 10; ++i)
+    {
+        suite.basin.run(864.0, 1);
+
+        for (int k = 0; k < 4; ++k)
+        {
+            EXPECT_NEAR(suite.basin.at(suite.oxygen, k) - suite.basin.at(suite.cbod, k),
+                        invariant, 1.0e-9)
+                << "step " << i << " layer " << k;
+        }
+    }
+
+    // And it moved: most of the demand should be gone after a day at 2/d.
+    EXPECT_LT(suite.basin.at(suite.cbod, 0), 0.85 * 5.0);
+}
+
+TEST(DissolvedOxygen, NitrificationCostsTheStoichiometricOxygen)
+{
+    // 4.57 g O₂ per g N is the number every reference quotes, and it has to
+    // appear as the ratio between what leaves ammonium and what leaves oxygen.
+    constexpr double ratio = 4.57;
+
+    Suite suite;
+    suite.model.includeAlgae               = false;
+    suite.model.temperatureTheta           = 1.0;
+    suite.model.cbodDecayPerDay            = 0.0;
+    suite.model.reaerationVelocityPerDay   = 0.0;
+    suite.model.sedimentOxygenDemandPerDay = 0.0;
+    suite.model.nitrificationPerDay        = 1.0;
+    suite.model.oxygenPerNitrogen          = ratio;
+
+    suite.build(/*layers=*/3, 9.0);
+
+    constexpr double nh0 = 0.5;
+    constexpr double do0 = 9.0;
+
+    suite.basin.setUniform(suite.oxygen, do0);
+    suite.basin.setUniform(suite.ammonium, nh0);
+    suite.basin.setUniform(suite.nitrate, 0.0);
+    suite.basin.setUniform(suite.phosphate, 0.0);
+    suite.basin.setUniform(suite.cbod, 0.0);
+
+    suite.basin.run(864.0, 10);
+
+    const double nitrified = nh0 - suite.basin.at(suite.ammonium, 1);
+    const double consumed  = do0 - suite.basin.at(suite.oxygen, 1);
+
+    ASSERT_GT(nitrified, 0.02) << "nothing was nitrified";
+
+    EXPECT_NEAR(consumed / nitrified, ratio, 1.0e-6 * ratio);
+
+    // Nitrogen moves between pools rather than disappearing.
+    EXPECT_NEAR(suite.basin.at(suite.ammonium, 1) + suite.basin.at(suite.nitrate, 1),
+                nh0, 1.0e-9);
+}
+
+TEST(DissolvedOxygen, NitrogenAndPhosphorusBudgetsClose)
+{
+    // The gate the whole template exists for. Growth, respiration, mortality and
+    // nitrification each move nutrients between pools, and every one of those
+    // terms has to carry the same stoichiometric coefficient or the model
+    // quietly manufactures nitrogen. Checked every step, and with settling off
+    // so nothing legitimately leaves the water column.
+    Suite suite;
+    suite.model.temperatureTheta       = 1.0;
+    suite.model.algalSettlingPerDay    = 0.0;
+    suite.model.algalGrowthPerDay      = 2.0;
+    suite.model.algalRespirationPerDay = 0.3;
+    suite.model.algalMortalityPerDay   = 0.2;
+    suite.model.nitrificationPerDay    = 0.5;
+
+    suite.build(/*layers=*/4, 8.0);
+
+    // Enough light for growth to be limited by nutrients rather than switched
+    // off entirely.
+    suite.basin.solver.lightOptions().incidentShortwave     = 400.0;
+    suite.basin.solver.lightOptions().surfaceAbsorption     = 0.0;
+    suite.basin.solver.lightOptions().backgroundAttenuation = 0.2;
+
+    suite.basin.setUniform(suite.oxygen, 9.0);
+    suite.basin.setUniform(suite.cbod, 1.0);
+    suite.basin.setUniform(suite.ammonium, 0.4);
+    suite.basin.setUniform(suite.nitrate, 0.2);
+    suite.basin.setUniform(suite.phosphate, 0.05);
+    suite.basin.setUniform(suite.algae, 2.0);
+
+    const double nitrogen   = suite.nitrogenAt(1);
+    const double phosphorus = suite.phosphorusAt(1);
+
+    ASSERT_GT(nitrogen, 0.0);
+    ASSERT_GT(phosphorus, 0.0);
+
+    for (int i = 0; i < 10; ++i)
+    {
+        suite.basin.run(864.0, 1);
+
+        for (int k = 0; k < 4; ++k)
+        {
+            EXPECT_NEAR(suite.nitrogenAt(k), nitrogen, 1.0e-8 * nitrogen)
+                << "nitrogen, step " << i << " layer " << k;
+            EXPECT_NEAR(suite.phosphorusAt(k), phosphorus, 1.0e-8 * phosphorus)
+                << "phosphorus, step " << i << " layer " << k;
+        }
+    }
+
+    // The budgets must be closing over real activity, not over a model that sat
+    // still: the algae should have grown measurably.
+    EXPECT_GT(suite.basin.at(suite.algae, 0), 1.05 * 2.0)
+        << "algae did not grow; the budget gate is vacuous";
+}
+
+TEST(DissolvedOxygen, GrowthIsTheProductOfItsLimitationFactors)
+{
+    // Each limitation factor computed independently here and multiplied, against
+    // what the configured network actually does over one short step. This is
+    // where a mis-parenthesised expression shows up — the budgets above would
+    // still close if growth were limited by the wrong product.
+    constexpr double muMax  = 2.0;
+    constexpr double ksLight = 100.0;
+    constexpr double ksN     = 0.02;
+    constexpr double ksP     = 0.004;
+    constexpr double nh4     = 0.3;
+    constexpr double no3     = 0.1;
+    constexpr double po4     = 0.02;
+    constexpr double algae0  = 1.0;
+    constexpr double incident = 500.0;
+    constexpr double kd       = 0.25;
+    constexpr double depth    = 8.0;
+    constexpr int    layers   = 4;
+
+    Suite suite;
+    suite.model.temperatureTheta          = 1.0;
+    suite.model.algalGrowthPerDay         = muMax;
+    suite.model.algalRespirationPerDay    = 0.0;
+    suite.model.algalMortalityPerDay      = 0.0;
+    suite.model.algalSettlingPerDay       = 0.0;
+    suite.model.algalLightAttenuation     = 0.0; // no self-shading, so light is known
+    suite.model.lightHalfSaturation       = ksLight;
+    suite.model.nitrogenHalfSaturation    = ksN;
+    suite.model.phosphorusHalfSaturation  = ksP;
+    suite.model.nitrificationPerDay       = 0.0;
+    suite.model.cbodDecayPerDay           = 0.0;
+    suite.model.reaerationVelocityPerDay  = 0.0;
+    suite.model.sedimentOxygenDemandPerDay = 0.0;
+
+    suite.build(layers, depth);
+
+    suite.basin.solver.lightOptions().incidentShortwave     = incident;
+    suite.basin.solver.lightOptions().surfaceAbsorption     = 0.0;
+    suite.basin.solver.lightOptions().backgroundAttenuation = kd;
+
+    suite.basin.setUniform(suite.oxygen, 9.0);
+    suite.basin.setUniform(suite.cbod, 0.0);
+    suite.basin.setUniform(suite.ammonium, nh4);
+    suite.basin.setUniform(suite.nitrate, no3);
+    suite.basin.setUniform(suite.phosphate, po4);
+    suite.basin.setUniform(suite.algae, algae0);
+
+    // One short step, so the concentrations the factors depend on have barely
+    // moved and the linearisation is accurate to well inside the tolerance.
+    constexpr double dt = 0.5;
+
+    suite.basin.run(dt, 1);
+
+    const double h   = depth / static_cast<double>(layers);
+    const double tau = kd * h;
+
+    for (int k = 0; k < layers; ++k)
+    {
+        // The layer-mean irradiance, from Beer-Lambert, computed here.
+        const double top   = incident * std::exp(-kd * static_cast<double>(k) * h);
+        const double light = top * (1.0 - std::exp(-tau)) / tau;
+
+        const double fL = light / (ksLight + light);
+        const double fN = (nh4 + no3) / (ksN + nh4 + no3);
+        const double fP = po4 / (ksP + po4);
+
+        const double rate = muMax / kSecondsPerDay * fL * fN * fP;
+
+        // The closed form, not `algae0 + rate * dt`. Growth is exponential, and
+        // the linear estimate carries a truncation error of (r dt)^2/2 that a
+        // tolerance scaled to the increment sits below — the same mistake this
+        // suite has now made twice, so it is written out rather than fixed
+        // quietly.
+        const double expected = algae0 * std::exp(rate * dt);
+
+        EXPECT_NEAR(suite.basin.at(suite.algae, k), expected, 1.0e-9)
+            << "layer " << k << ": fL " << fL << " fN " << fN << " fP " << fP;
+    }
+
+    // Oxygen is produced in proportion, which pins the photosynthetic
+    // stoichiometry against the same growth.
+    const double grown = suite.basin.at(suite.algae, 0) - algae0;
+
+    EXPECT_NEAR(suite.basin.at(suite.oxygen, 0) - 9.0,
+                suite.model.oxygenPerAlgae * grown, 1.0e-6 * suite.model.oxygenPerAlgae * grown);
+}
+
+TEST(DissolvedOxygen, WithoutNutrientsGrowthIsLimitedByLightAlone)
+{
+    // The reduced configuration has to be a real model rather than a broken
+    // one: no nutrient species exist, so no rate law may reference them.
+    Suite suite;
+    suite.model.includeNutrients = false;
+    suite.model.temperatureTheta = 1.0;
+
+    suite.build(/*layers=*/3, 9.0);
+
+    EXPECT_LT(suite.ammonium, 0);
+    EXPECT_GE(suite.algae, 0);
+
+    suite.basin.solver.lightOptions().incidentShortwave = 300.0;
+
+    suite.basin.setUniform(suite.algae, 1.0);
+    suite.basin.setUniform(suite.oxygen, 9.0);
+
+    suite.basin.run(864.0, 5);
+
+    EXPECT_GT(suite.basin.at(suite.algae, 0), 1.0) << "algae did not grow on light alone";
+}
+
+TEST(DissolvedOxygen, InTheDarkAlgaeOnlyLose)
+{
+    // Zero irradiance means zero growth, so respiration and mortality are all
+    // that is left. Worth pinning because the light factor sits in a
+    // denominator, and a formulation that read `Ks/(Ks+I)` by mistake would
+    // grow fastest at night.
+    Suite suite;
+    suite.model.temperatureTheta       = 1.0;
+    suite.model.algalSettlingPerDay    = 0.0;
+    suite.model.algalRespirationPerDay = 0.5;
+    suite.model.algalMortalityPerDay   = 0.5;
+
+    suite.build(/*layers=*/3, 9.0);
+
+    suite.basin.solver.lightOptions().incidentShortwave = 0.0;
+
+    suite.basin.setUniform(suite.oxygen, 9.0);
+    suite.basin.setUniform(suite.ammonium, 0.3);
+    suite.basin.setUniform(suite.nitrate, 0.1);
+    suite.basin.setUniform(suite.phosphate, 0.02);
+    suite.basin.setUniform(suite.algae, 3.0);
+
+    suite.basin.run(864.0, 10);
+
+    EXPECT_LT(suite.basin.at(suite.algae, 1), 3.0) << "algae grew in the dark";
+
+    // Respiration consumes oxygen; with no photosynthesis the water column can
+    // only lose it.
+    EXPECT_LT(suite.basin.at(suite.oxygen, 1), 9.0);
+}
+
+TEST(DissolvedOxygen, MisconfigurationIsRefused)
+{
+    Suite suite;
+    suite.model.temperatureTheta = 1.0;
+    suite.build(/*layers=*/3, 9.0);
+
+    std::string message;
+
+    DissolvedOxygenTemplate bad;
+    bad.temperatureTheta = 1.0;
+    bad.cbodDecayPerDay  = -1.0;
+    EXPECT_FALSE(bad.configure(suite.basin.solver, message));
+
+    DissolvedOxygenTemplate zeroHalfSaturation;
+    zeroHalfSaturation.temperatureTheta    = 1.0;
+    zeroHalfSaturation.lightHalfSaturation = 0.0;
+    EXPECT_FALSE(zeroHalfSaturation.configure(suite.basin.solver, message));
+}
