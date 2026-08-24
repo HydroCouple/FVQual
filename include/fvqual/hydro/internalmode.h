@@ -57,6 +57,7 @@
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/barotropicsolver.h"
 #include "fvqual/hydro/pressureclosure.h"
+#include "fvqual/kinetics/lightfield.h"
 #include "fvqual/kinetics/reactionnetwork.h"
 #include "fvqual/forcing/sources.h"
 #include "fvqual/forcing/outletgroups.h"
@@ -366,6 +367,29 @@ public:
     }
 
     /*!
+     * \brief Irradiance down each column, and its optical properties.
+     *
+     * Recomputed each step from the transported field, immediately before the
+     * reactions, so self-shading reflects the constituents the reactions are
+     * about to see. Only computed when a rate law references `__LIGHT__` —
+     * otherwise the march is work with no consumer.
+     */
+    [[nodiscard]] Kinetics::LightField &light() noexcept { return m_light; }
+    [[nodiscard]] const Kinetics::LightField &light() const noexcept { return m_light; }
+
+    /*!
+     * \brief Incident shortwave and optical properties (runtime-settable).
+     */
+    [[nodiscard]] Kinetics::LightOptions &lightOptions() noexcept
+    {
+        return m_lightOptions;
+    }
+    [[nodiscard]] const Kinetics::LightOptions &lightOptions() const noexcept
+    {
+        return m_lightOptions;
+    }
+
+    /*!
      * \brief Resolves the reaction network's names against this solver's species.
      *
      * Exists rather than exposing the registry so the network cannot be bound
@@ -393,6 +417,7 @@ private:
     void   computeLayerFluxes();
     void   diagnoseVerticalFlux(double dt);
     void   transportScalars(double dt);
+    void   updateCellDepth();
     void   applyHorizontalDiffusion(double dt, std::span<double> values);
     void   applySurfaceHeatFlux(double dt);
     double bottomDragCoefficient(int64_t column) const;
@@ -410,6 +435,8 @@ private:
     Forcing::OutletGroupSet           m_groups;
     Forcing::TransferSet              m_transfers;
     Kinetics::ReactionNetwork         m_reactions;
+    Kinetics::LightField              m_light;
+    Kinetics::LightOptions            m_lightOptions;
     StepProfile                       m_profile;
     std::unique_ptr<IPressureClosure> m_pressure;
 
@@ -424,6 +451,7 @@ private:
     std::vector<double> m_columnAccelerationY;
     std::vector<double> m_km;
     std::vector<double> m_kz;
+    std::vector<double> m_cellDepth; //!< Cell-centre depth below the surface (m).
     std::vector<double> m_edgeLayerFlux;
     std::vector<double> m_verticalFlux;
     std::vector<double> m_oldVolume;

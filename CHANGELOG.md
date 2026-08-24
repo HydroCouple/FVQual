@@ -351,6 +351,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reaction workspace is re-sized if the host raises the thread count after
   `compile()`; the previous sizing would have had threads writing past the end.
 
+### Added — Phase 6 (F6.2a, light field and derived variables)
+
+- `FVQual::Kinetics::LightField`: Beer-Lambert irradiance down each column, with
+  clear-water attenuation, per-species self-shading, and surface absorption
+  reported rather than discarded. Because attenuation is piecewise constant in a
+  layer and the exponential composes exactly, the interface irradiances equal
+  `I0 exp(-Kd z)` to round-off at any layer count — so the gates are written at
+  1e-12 against exact values rather than against a discretization tolerance.
+- **Cell values are layer means, not top-of-layer values.** Over a layer of
+  optical depth `tau` the mean is smaller by `(1 - e^-tau)/tau`, which in a 2 m
+  layer at Kd = 0.6 is a factor of 1.4. Using the top value would bias
+  production high everywhere, worst in the surface layer where most of it
+  happens. `meanAttenuationFactor` is written to stay accurate as `tau` vanishes,
+  which is an ordinary case: a sigma grid's top layer thins whenever the surface
+  drops.
+- A third category of quantity in a rate law, after species and constants:
+  engine-computed `DerivedFields` addressed by reserved name — `__LIGHT__`,
+  `__DEPTH__`, `__THICKNESS__`. Referencing one that was not supplied is
+  refused; ablation showed that check is a bounds guard rather than the
+  diagnostic it was written as, since the integration loop indexes the span
+  directly.
+- Wired into the step: light is marched from the just-transported field
+  immediately before the reactions, so self-shading reflects the constituents
+  the reactions are about to act on, and only when a rate law reads it.
+- Gates include light-limited growth through the full solver where every layer
+  grows at its own rate against its own closed form — which a single
+  column-averaged irradiance would fail while still passing any "growth
+  happened" check.
+- Two of my own test errors, recorded because both were wrong expectations
+  rather than defects: a linearised expectation held to a tolerance a thousand
+  times below its own truncation error, and a `__DEPTH__ * __THICKNESS__` gate
+  that multiplication's commutativity would have let pass with the two fields
+  swapped.
+
 ### Known limitations
 
 - The expression parser binds unary minus tighter than exponentiation, so

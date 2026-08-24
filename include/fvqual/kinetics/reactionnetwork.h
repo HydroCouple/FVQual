@@ -48,10 +48,31 @@
 #include "fvqual/state/speciesregistry.h"
 #include "fvqual/state/statestore.h"
 
+#include <span>
 #include <string>
 #include <vector>
 
 namespace FVQual::Kinetics {
+
+/*!
+ * \brief Engine-computed per-cell fields a rate law may reference by name.
+ *
+ * The third category of quantity in an expression, after species and
+ * constants: things the model knows about a cell that are not transported.
+ * Light is the reason this exists — algal growth cannot be written without it,
+ * and it cannot be a species because it is not conserved and not advected.
+ *
+ * Each span is either empty or exactly `cellCount` long. Empty means "not
+ * supplied", and a rate law that references a field which was not supplied is
+ * refused rather than reading a zero — a zero light field is a model with no
+ * photosynthesis, which runs and looks plausible.
+ */
+struct FVQual_EXPORT DerivedFields
+{
+    std::span<const double> light;     //!< Layer-mean irradiance (W/m²).
+    std::span<const double> depth;     //!< Depth of the cell centre below the surface (m).
+    std::span<const double> thickness; //!< Cell thickness (m).
+};
 
 /*!
  * \brief What the last integration did, beyond changing the state.
@@ -84,6 +105,15 @@ struct FVQual_EXPORT ReactionDiagnostics
 class FVQual_EXPORT ReactionNetwork
 {
 public:
+    //! Reserved name for layer-mean irradiance (W/m²).
+    static constexpr const char *kLight = "__LIGHT__";
+
+    //! Reserved name for the depth of the cell centre below the surface (m).
+    static constexpr const char *kDepth = "__DEPTH__";
+
+    //! Reserved name for cell thickness (m).
+    static constexpr const char *kThickness = "__THICKNESS__";
+
     /*!
      * \brief Registers a named constant usable by every rate law.
      *
@@ -131,10 +161,20 @@ public:
      * \param[in]     cellCount Cells to integrate.
      * \param[in]     dt        Interval (s).
      * \param[out]    message   Failure description when returning false.
+     * \param[in]     fields    Engine-computed per-cell fields. Required only
+     *                          for the ones the rate laws actually reference.
      */
     [[nodiscard]] bool integrate(const State::SpeciesRegistry &registry,
                                  State::StateStore &state, int64_t cellCount, double dt,
-                                 std::string &message);
+                                 std::string &message,
+                                 const DerivedFields &fields = {});
+
+    /*!
+     * \brief Whether any rate law references the irradiance field.
+     *
+     * Lets a caller skip computing light for a network that does not use it.
+     */
+    [[nodiscard]] bool usesLight() const noexcept;
 
     //! Number of species carrying a rate law.
     [[nodiscard]] int reactingCount() const noexcept
@@ -165,9 +205,21 @@ private:
         int         species = -1; //!< Index in the registry, after compile().
     };
 
+    //! The derived fields, in the order they occupy the variable table.
+    enum Derived : int
+    {
+        DerivedLight = 0,
+        DerivedDepth,
+        DerivedThickness,
+        DerivedCount
+    };
+
     std::vector<Rate>        m_rates;
     std::vector<std::string> m_constantNames;
     std::vector<double>      m_constantValues;
+
+    //! Which derived fields the compiled rate laws actually reference.
+    bool m_derivedUsed[DerivedCount] = {false, false, false};
 
     //! Variable table handed to the evaluator: species, then constants.
     std::vector<std::string> m_variableNames;

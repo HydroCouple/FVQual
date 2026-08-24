@@ -18,6 +18,7 @@ add_library(fvqual_core
     kinetics/expression.cpp
     kinetics/odesolver.cpp
     kinetics/reactionnetwork.cpp
+    kinetics/lightfield.cpp
     forcing/transfers.cpp
     state/speciesregistry.cpp
     state/statestore.cpp

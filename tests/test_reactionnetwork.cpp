@@ -429,6 +429,30 @@ struct Basin
     int temperature = -1;
     int dye         = -1;
 
+    /*!
+     * \brief Settable before build(), so a test can ask for a still column.
+     *
+     * The per-layer light gates need vertical mixing switched off: a neutrally
+     * stratified column gets the *maximum* Pacanowski-Philander diffusivity,
+     * which would blend the differential growth the gate is measuring.
+     */
+    InternalModeOptions options = [] {
+        InternalModeOptions defaults;
+        defaults.gravity         = 9.80665;
+        defaults.manningN        = 0.0;
+        defaults.cflNumber       = 0.5;
+        defaults.surfaceHeatFlux = 0.0;
+        return defaults;
+    }();
+
+    void suppressVerticalMixing()
+    {
+        options.neutralViscosity      = 0.0;
+        options.backgroundViscosity   = 0.0;
+        options.backgroundDiffusivity = 0.0;
+        options.convectiveMixing      = 0.0;
+    }
+
     //! \param front Initial temperature as a function of x — a step drives motion.
     template <typename TemperatureFunction, typename DyeFunction>
     void build(int columns, int layers, double length, double width, double depth,
@@ -474,12 +498,6 @@ struct Basin
                 state.speciesAt(dye, cell)         = dyeField(x);
             }
         }
-
-        InternalModeOptions options;
-        options.gravity         = 9.80665;
-        options.manningN        = 0.0;
-        options.cflNumber       = 0.5;
-        options.surfaceHeatFlux = 0.0;
 
         ASSERT_TRUE(solver.initialize(layered, state, registry, options, message))
             << message;
@@ -662,6 +680,263 @@ TEST(ReactionNetworkSolver, LinearDecayInAStirredBasinFollowsTheBulkLaw)
 
     EXPECT_GT(crossed, 1.0e-3 * mass)
         << "no dye crossed the front; the bulk law was satisfied by a still basin";
+}
+
+// ── Derived environmental fields ──────────────────────────────────────────
+
+TEST(ReactionNetwork, AReferencedFieldThatWasNotSuppliedIsRefused)
+{
+    // The same discipline as an unbound name, one level up. An empty light
+    // field would read as zero irradiance, which is not an error anyone
+    // notices — it is a model in which photosynthesis quietly never happens.
+    Box box;
+    box.build();
+    box.addSpecies("A", 1.0);
+    box.allocate();
+
+    ReactionNetwork network;
+    std::string     message;
+
+    ASSERT_TRUE(network.addRate("A", "0 - 0.001 * __LIGHT__ * A", message)) << message;
+    ASSERT_TRUE(network.compile(box.registry, message)) << message;
+
+    EXPECT_TRUE(network.usesLight());
+
+    EXPECT_FALSE(network.integrate(box.registry, box.state, box.cells(), 1.0, message));
+    EXPECT_NE(message.find("__LIGHT__"), std::string::npos) << message;
+
+    // Supplied, it runs.
+    const std::vector<double> light(static_cast<size_t>(box.cells()), 200.0);
+
+    FVQual::Kinetics::DerivedFields fields;
+    fields.light = light;
+
+    EXPECT_TRUE(network.integrate(box.registry, box.state, box.cells(), 1.0, message,
+                                  fields))
+        << message;
+
+    // A field shorter than the mesh is refused too — it would be a stale array
+    // from a different mesh, read past its end.
+    const std::vector<double> tooShort(static_cast<size_t>(box.cells()) - 1, 200.0);
+
+    fields.light = tooShort;
+
+    EXPECT_FALSE(network.integrate(box.registry, box.state, box.cells(), 1.0, message,
+                                  fields));
+}
+
+TEST(ReactionNetwork, AnUnusedFieldNeedNotBeSupplied)
+{
+    // The counterpart: a network that never mentions light must not demand it.
+    Box box;
+    box.build();
+    box.addSpecies("A", 1.0);
+    box.allocate();
+    box.setUniform(0, 1.0);
+
+    ReactionNetwork network;
+    std::string     message;
+
+    ASSERT_TRUE(network.addRate("A", "0 - 0.001 * A", message)) << message;
+    ASSERT_TRUE(network.compile(box.registry, message)) << message;
+
+    EXPECT_FALSE(network.usesLight());
+    EXPECT_TRUE(network.integrate(box.registry, box.state, box.cells(), 1.0, message))
+        << message;
+}
+
+TEST(ReactionNetwork, SpeciesDerivedFieldsAndConstantsCoexistInOneExpression)
+{
+    // The structural gate. The variable table is species, then the three
+    // derived fields, then constants, and the constants moved when the derived
+    // block was inserted between them. An off-by-three in that offset would
+    // feed a rate law an irradiance where it expected a coefficient — a wrong
+    // answer, not a crash, so it needs a test that names all three kinds at
+    // once and checks the arithmetic.
+    Box box;
+    box.build();
+    const int a = box.addSpecies("A", 2.0);
+    const int b = box.addSpecies("B", 3.0);
+    box.allocate();
+    box.setUniform(a, 2.0);
+    box.setUniform(b, 3.0);
+
+    ReactionNetwork network;
+    std::string     message;
+
+    ASSERT_TRUE(network.addConstant("k", 0.5, message)) << message;
+    ASSERT_TRUE(network.addConstant("m", 7.0, message)) << message;
+
+    // Every category, and the constants last so a shifted offset shows up.
+    ASSERT_TRUE(network.addRate("A", "0 - k * A * B * __LIGHT__ / m / __THICKNESS__",
+                                message))
+        << message;
+    ASSERT_TRUE(network.compile(box.registry, message)) << message;
+
+    constexpr double irradiance = 400.0;
+    constexpr double thickness  = 2.5;
+
+    const std::vector<double> light(static_cast<size_t>(box.cells()), irradiance);
+    const std::vector<double> thick(static_cast<size_t>(box.cells()), thickness);
+
+    FVQual::Kinetics::DerivedFields fields;
+    fields.light     = light;
+    fields.thickness = thick;
+
+    constexpr double dt = 0.01;
+
+    ASSERT_TRUE(network.integrate(box.registry, box.state, box.cells(), dt, message,
+                                 fields))
+        << message;
+
+    // B carries no rate law, so the coefficient multiplying A is constant and
+    // the law is first-order with a closed form. The first version of this gate
+    // compared against `A0 + rate * dt` instead, with a tolerance a thousand
+    // times below that linearisation's own truncation error — it failed by
+    // exactly `A0 c² dt²/2`, which was my arithmetic and not a defect.
+    const double coefficient = 0.5 * 3.0 * irradiance / 7.0 / thickness;
+    const double expected    = 2.0 * std::exp(-coefficient * dt);
+
+    // The tolerance is the integrator's own: it is asked for 1e-8 relative
+    // accuracy, so demanding better than that of it would be testing the
+    // controller's luck rather than this table's layout. Measured error 1e-9.
+    EXPECT_NEAR(box.at(a, 0), expected, 1.0e-8 * expected)
+        << "coefficient " << coefficient;
+
+    // The change is large, so a shifted table offset could not slip through as
+    // a small discrepancy.
+    EXPECT_LT(box.at(a, 0), 0.8 * 2.0);
+
+    EXPECT_EQ(box.at(b, 0), 3.0) << "B has no rate law and must not have moved";
+}
+
+TEST(ReactionNetwork, ASpeciesNamedLikeADerivedFieldIsRefused)
+{
+    Box box;
+    box.build();
+    box.addSpecies("__LIGHT__", 1.0);
+    box.allocate();
+
+    ReactionNetwork network;
+    std::string     message;
+
+    ASSERT_TRUE(network.addRate("__LIGHT__", "0 - 0.1 * __LIGHT__", message)) << message;
+
+    EXPECT_FALSE(network.compile(box.registry, message));
+    EXPECT_NE(message.find("__LIGHT__"), std::string::npos) << message;
+}
+
+TEST(ReactionNetworkSolver, LightLimitedGrowthUsesEachLayersOwnIrradiance)
+{
+    // What the whole of F6.2a exists for. Growth is light-limited, light falls
+    // off with depth, so each layer grows at its own rate — and every rate has a
+    // closed form, because with no self-shading the irradiance is constant in
+    // time.
+    //
+    // This also gates that the light reaching the kinetics is per-cell. A single
+    // column-averaged scalar, or the surface value used everywhere, would pass a
+    // "growth happened" check and fail this one.
+    constexpr double incident   = 400.0;
+    constexpr double kd         = 0.5;
+    constexpr double halfSat    = 150.0; // W/m², the Monod half-saturation
+    constexpr double muMax      = 0.002; // 1/s
+    constexpr double c0         = 1.0;
+    constexpr double totalDepth = 12.0;
+    constexpr int    layers     = 6;
+    constexpr double dt         = 10.0;
+    constexpr int    steps      = 20;
+
+    Basin basin;
+    basin.suppressVerticalMixing();
+    basin.build(4, layers, 200.0, 40.0, totalDepth, uniform(12.0), uniform(c0));
+
+    basin.solver.lightOptions().incidentShortwave     = incident;
+    basin.solver.lightOptions().surfaceAbsorption     = 0.0;
+    basin.solver.lightOptions().backgroundAttenuation = kd;
+
+    std::string message;
+
+    ASSERT_TRUE(basin.solver.reactions().addConstant("mu", muMax, message)) << message;
+    ASSERT_TRUE(basin.solver.reactions().addConstant("ks", halfSat, message)) << message;
+    ASSERT_TRUE(basin.solver.reactions().addRate(
+        "DYE", "mu * __LIGHT__ / (ks + __LIGHT__) * DYE", message))
+        << message;
+    ASSERT_TRUE(basin.solver.compileReactions(message)) << message;
+
+    for (int i = 0; i < steps; ++i)
+        ASSERT_TRUE(basin.solver.step(dt, message)) << message;
+
+    const double h       = totalDepth / static_cast<double>(layers);
+    const double tau     = kd * h;
+    const double elapsed = dt * steps;
+
+    double previous = 0.0;
+
+    for (int k = 0; k < layers; ++k)
+    {
+        // The layer-mean irradiance, recomputed here from Beer-Lambert rather
+        // than read back from the light field, so the two are independent.
+        const double top        = incident * std::exp(-kd * static_cast<double>(k) * h);
+        const double irradiance = top * (1.0 - std::exp(-tau)) / tau;
+
+        const double rate  = muMax * irradiance / (halfSat + irradiance);
+        const double exact = c0 * std::exp(rate * elapsed);
+
+        const double actual = basin.state.speciesAt(basin.dye, basin.layered.cell(0, k));
+
+        EXPECT_NEAR(actual, exact, 1.0e-6 * exact) << "layer " << k;
+
+        // Strictly decreasing with depth. Without this the gate would pass on a
+        // uniform field that happened to match the mean.
+        if (k > 0)
+            EXPECT_LT(actual, previous) << "layer " << k << " grew as fast as the one above";
+
+        previous = actual;
+    }
+
+    // And the spread is large, so "each layer its own rate" is a real claim
+    // here rather than a distinction within the tolerance.
+    const double top    = basin.state.speciesAt(basin.dye, basin.layered.cell(0, 0));
+    const double bottom = basin.state.speciesAt(basin.dye, basin.layered.cell(0, layers - 1));
+
+    EXPECT_GT(top / bottom, 1.2) << "top " << top << " bottom " << bottom;
+}
+
+TEST(ReactionNetworkSolver, DepthAndThicknessComeFromTheMesh)
+{
+    // Both are read straight from the geometry, so the gate is that the values a
+    // rate law sees are the ones the mesh holds — depth positive downward from
+    // the moving surface, thickness the cell's own.
+    constexpr double totalDepth = 20.0;
+    constexpr int    layers     = 5;
+    constexpr double dt         = 1.0e-3;
+
+    Basin basin;
+    basin.suppressVerticalMixing();
+    basin.build(4, layers, 200.0, 40.0, totalDepth, uniform(12.0), uniform(0.0));
+
+    std::string message;
+
+    // The ratio, not the product: multiplication is commutative, so a rate law
+    // written as `__DEPTH__ * __THICKNESS__` would pass this gate with the two
+    // fields wired to each other's slots. Dividing makes the swap visible.
+    //
+    // depth/thickness at the centre of layer k is exactly k + 1/2, which is also
+    // a different value in every layer and zero in none.
+    ASSERT_TRUE(basin.solver.reactions().addRate("DYE", "__DEPTH__ / __THICKNESS__",
+                                                 message))
+        << message;
+    ASSERT_TRUE(basin.solver.compileReactions(message)) << message;
+    ASSERT_TRUE(basin.solver.step(dt, message)) << message;
+
+    for (int k = 0; k < layers; ++k)
+    {
+        const double expected = (static_cast<double>(k) + 0.5) * dt;
+
+        EXPECT_NEAR(basin.state.speciesAt(basin.dye, basin.layered.cell(0, k)), expected,
+                    1.0e-9 * expected)
+            << "layer " << k;
+    }
 }
 
 TEST(ReactionNetworkSolver, TemperatureIsAddressableByItsRegistryId)

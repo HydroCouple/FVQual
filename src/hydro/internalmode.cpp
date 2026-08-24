@@ -182,6 +182,14 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_accelerationY.assign(cells, 0.0);
     m_km.assign(interfaces, options.backgroundViscosity);
     m_kz.assign(interfaces, options.backgroundDiffusivity);
+    m_cellDepth.assign(cells, 0.0);
+
+    // Sized unconditionally, even though the march itself only runs when a rate
+    // law asks for irradiance. The alternative is allocating it when the network
+    // is compiled, which puts an ordering trap in the API: the natural thing is
+    // to set self-shading coefficients before compiling, and that would then
+    // write into a field that does not exist yet.
+    m_light.initialize(mesh, species);
     m_edgeLayerFlux.assign(edgeLayers, 0.0);
     m_verticalFlux.assign(interfaces, 0.0);
     m_oldVolume.assign(cells, 0.0);
@@ -1037,6 +1045,28 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
     }
 }
 
+void InternalModeSolver::updateCellDepth()
+{
+    const Mesh::LayeredMesh &mesh   = *m_mesh;
+    const int64_t            columns = mesh.columnCount();
+    const int                layers  = mesh.layerCount();
+
+    FVQual_PARALLEL_FOR
+    for (int64_t c = 0; c < columns; ++c)
+    {
+        const double surface = mesh.z(c, 0);
+
+        for (int k = 0; k < layers; ++k)
+        {
+            // Depth of the cell centre below the free surface, so it is
+            // positive downward and moves with the surface rather than being
+            // measured from a fixed datum.
+            m_cellDepth[static_cast<size_t>(mesh.cell(c, k))] =
+                surface - 0.5 * (mesh.z(c, k) + mesh.z(c, k + 1));
+        }
+    }
+}
+
 bool InternalModeSolver::compileReactions(std::string &message)
 {
     if (m_species == nullptr)
@@ -1257,8 +1287,23 @@ bool InternalModeSolver::step(double dt, std::string &message)
     {
         ScopedTimer timer(m_profile.reactions);
 
+        updateCellDepth();
+
+        // Light is marched from the just-transported field, so self-shading
+        // reflects the constituents the reactions are about to act on. Skipped
+        // entirely when nothing reads it: the march costs a pass over every
+        // cell with a species loop inside, unlike the depth field above, which
+        // is one subtraction and not worth branching on.
+        if (m_reactions.usesLight())
+            m_light.update(mesh, *m_state, m_lightOptions);
+
+        Kinetics::DerivedFields fields;
+        fields.light     = m_light.meanIrradiance();
+        fields.depth     = m_cellDepth;
+        fields.thickness = mesh.thickness();
+
         if (!m_reactions.integrate(*m_species, *m_state, m_state->cellCount(), dt,
-                                   message))
+                                   message, fields))
         {
             return false;
         }

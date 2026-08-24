@@ -91,10 +91,29 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
     // variable index below `species` is a concentration and can be refreshed
     // from the integrator's state vector without a lookup.
     m_variableNames.clear();
-    m_variableNames.reserve(static_cast<size_t>(species) + m_constantNames.size());
+    m_variableNames.reserve(static_cast<size_t>(species) + DerivedCount +
+                            m_constantNames.size());
 
     for (int s = 0; s < species; ++s)
         m_variableNames.push_back(registry.definition(s).id);
+
+    // Then the engine-computed fields, always present in the table whether or
+    // not they are used — their positions have to be fixed for the integration
+    // loop to fill them without a lookup.
+    const char *const derivedNames[DerivedCount] = {kLight, kDepth, kThickness};
+
+    for (const char *name : derivedNames)
+    {
+        if (std::find(m_variableNames.begin(), m_variableNames.end(), name) !=
+            m_variableNames.end())
+        {
+            message = std::string("species '") + name +
+                      "' collides with a reserved derived-field name";
+            return false;
+        }
+
+        m_variableNames.push_back(name);
+    }
 
     for (const std::string &name : m_constantNames)
     {
@@ -115,6 +134,9 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
         m_variableTable.push_back(name.c_str());
 
     const int variables = static_cast<int>(m_variableTable.size());
+
+    for (bool &used : m_derivedUsed)
+        used = false;
 
     for (Rate &rate : m_rates)
     {
@@ -146,8 +168,22 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
         {
             message = "rate law for '" + rate.id + "' refers to " +
                       std::to_string(used - bound) +
-                      " name(s) that are neither a species nor a constant: " + rate.text;
+                      " name(s) that are neither a species, a derived field, nor a "
+                      "constant: " + rate.text;
             return false;
+        }
+
+        // Record which derived fields this law reads, so integrate() can refuse
+        // when one of them was not supplied.
+        for (const Token &token : rate.expression.postfix)
+        {
+            if (token.type != TokenType::VARIABLE)
+                continue;
+
+            const int offset = token.var_idx - species;
+
+            if (offset >= 0 && offset < DerivedCount)
+                m_derivedUsed[offset] = true;
         }
     }
 
@@ -163,9 +199,14 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
     return true;
 }
 
+bool ReactionNetwork::usesLight() const noexcept
+{
+    return m_derivedUsed[DerivedLight];
+}
+
 bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
                                 State::StateStore &state, int64_t cellCount, double dt,
-                                std::string &message)
+                                std::string &message, const DerivedFields &fields)
 {
     if (m_rates.empty())
     {
@@ -189,6 +230,36 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
     const int species   = registry.count();
     const int variables = static_cast<int>(m_variableTable.size());
     const int reacting  = static_cast<int>(m_rates.size());
+
+    // A referenced field that was not supplied is refused here. Ablating this
+    // check does not produce a quiet zero as I first assumed — it segfaults,
+    // because the integration loop indexes the span directly. So this is a
+    // bounds guard first and a diagnostic second.
+    const std::span<const double> derived[DerivedCount] = {fields.light, fields.depth,
+                                                           fields.thickness};
+
+    const char *const derivedNames[DerivedCount] = {kLight, kDepth, kThickness};
+
+    for (int d = 0; d < DerivedCount; ++d)
+    {
+        if (!m_derivedUsed[d])
+            continue;
+
+        // One check, two messages. An earlier version tested emptiness
+        // separately, which an ablation showed to be dead code: an empty span
+        // has size zero and so already fails the length test. The distinction
+        // that survives is only in what the caller is told.
+        if (static_cast<int64_t>(derived[d].size()) < cellCount)
+        {
+            message = derived[d].empty()
+                          ? std::string("a rate law references ") + derivedNames[d] +
+                                " but that field was not supplied"
+                          : std::string("the ") + derivedNames[d] + " field covers " +
+                                std::to_string(derived[d].size()) + " cells but " +
+                                std::to_string(cellCount) + " were asked for";
+            return false;
+        }
+    }
 
     // The workspace was sized at compile() time from the then-current thread
     // count. A host that raises it afterwards — omp_set_num_threads() from an
@@ -223,8 +294,17 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
         for (int s = 0; s < species; ++s)
             values[s] = state.speciesAt(s, cell);
 
+        for (int d = 0; d < DerivedCount; ++d)
+        {
+            values[species + d] =
+                m_derivedUsed[d] ? derived[d][static_cast<size_t>(cell)] : 0.0;
+        }
+
         for (int c = 0; c < static_cast<int>(m_constantValues.size()); ++c)
-            values[species + c] = m_constantValues[static_cast<size_t>(c)];
+        {
+            values[species + DerivedCount + c] =
+                m_constantValues[static_cast<size_t>(c)];
+        }
 
         for (int r = 0; r < reacting; ++r)
             y[r] = state.speciesAt(m_rates[static_cast<size_t>(r)].species, cell);
