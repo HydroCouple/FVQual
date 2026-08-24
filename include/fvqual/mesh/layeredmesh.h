@@ -244,6 +244,12 @@ public:
     //! Whether any column carries a hypsographic curve.
     [[nodiscard]] bool hasHypsography() const noexcept { return m_hasHypsography; }
 
+    //! Sampled elevations of \p column's curve; empty when it has none.
+    [[nodiscard]] const std::vector<double> &hypsographyElevation(int64_t column) const;
+
+    //! Sampled areas of \p column's curve; empty when it has none.
+    [[nodiscard]] const std::vector<double> &hypsographyArea(int64_t column) const;
+
     /*!
      * \brief Plan area of \p column at elevation \p z (m²).
      *

@@ -609,7 +609,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   surface, frozen back radiation, flipped latent sign — each break the gates
   that claim them.
 
-### Added — Phase 1 (F1.5 stage 1, depth-varying plan area)
+### Added — Phase 1 (F1.5, depth-varying plan area)
 
 - `LayeredMesh::setHypsography()`: a per-column plan area that varies with
   elevation, so cell volumes and the volume-elevation curve reflect a real
@@ -633,20 +633,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   volume.
 - **Nothing changes without a curve.** A column with no hypsography produces
   bit-for-bit its previous volumes, gated with `EXPECT_DOUBLE_EQ`, and the whole
-  existing suite is unmoved.
+  existing suite is unmoved — the barotropic solver branches so the
+  constant-area path is the original code, untouched.
+- **The external mode evolves volume, not depth, on a hypsographic column.**
+  Updating stage with the area at the start of the step leaves an error of order
+  `(dEta)² dA/dz` against the exact integral the mesh computes: measured, the
+  mode-consistency residual sat at **7.7e-7** rather than round-off. Advancing
+  volume and inverting the storage curve — a closed-form quadratic root within
+  each linear segment, not bisection — makes both modes compute the same
+  integral, and the residual returns to 1e-15.
+- Gates: mode consistency holds with the surface actively rising on a steeply
+  tapered mesh; still water over sloping bathymetry stays still, so
+  well-balancedness survives the change; and the stage after a known inflow
+  matches the analytic inverse of the storage curve, with a check that a
+  constant-area answer would have been visibly different.
 
 ### Known limitations
 
 - An open boundary cannot do selective withdrawal, and its inflow composition is
   uniform over the boundary rather than specified per layer.
 
-- **Hypsography is stage 1 of 2.** The mesh's volumes are correct, but the
-  external mode still evolves *depth* on a constant plan area — the form the
-  HLLC solver and the well-balancedness proof rest on — so the two modes would
-  disagree about column storage. `InternalModeSolver::initialize()` therefore
-  refuses a hypsographic mesh outright rather than running with a silently
-  broken mass budget. Stage 2 makes the free surface evolve storage and
-  re-establishes the mode-consistency and well-balancedness gates.
+- **Hypsography corrects storage but not conveyance.** With plan area varying
+  inside a cell the depth-averaged equations become the sub-grid, or porous,
+  shallow-water equations, in which storage and conveyance are separate
+  functions of stage and momentum carries a pressure term from the sloping
+  banks. Continuity is now exact; momentum still uses the constant-area form.
+  That is defensible for a reservoir, where the dynamics are dominated by
+  storage and buoyancy rather than fast shallow flow, and would not be for a
+  flood wave down a valley. Horizontal face areas likewise still use the surface
+  edge length at every layer.
 
 - Meteorology is uniform over the water body, and the atmospheric longwave uses
   Swinbank's empirical emissivity rather than a measured incoming-longwave

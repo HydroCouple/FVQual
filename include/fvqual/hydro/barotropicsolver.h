@@ -312,6 +312,37 @@ public:
     }
 
     /*!
+     * \brief Gives a column a storage area that varies with stage (F1.5).
+     *
+     * Continuity is a statement about volume, and `dh/dt = -flux/A` only
+     * follows when A is independent of stage. A reservoir's is not — DeGray's
+     * deepest section is 85 times wider at the surface than at the bed — so
+     * with a curve the same inflow raises a wide pool slowly and a narrow gorge
+     * quickly, which is the behaviour storage routing exists to capture.
+     *
+     * **This corrects continuity only.** With area varying inside a cell the
+     * depth-averaged equations become the sub-grid, or porous, shallow-water
+     * equations, in which storage and conveyance are separate functions of
+     * stage and momentum carries an extra pressure term from the sloping banks.
+     * That formulation is not implemented: momentum here still uses the
+     * constant-area form, which is a defensible approximation for a reservoir,
+     * where the dynamics are dominated by storage and buoyancy rather than by
+     * fast, shallow, high-Froude flow. It would not be defensible for a flood
+     * wave down a valley.
+     *
+     * \param[in]  column    Column index.
+     * \param[in]  elevation Sample elevations (m), strictly increasing.
+     * \param[in]  area      Plan area at each elevation (m²), non-decreasing.
+     * \param[out] message   Failure description when returning false.
+     */
+    [[nodiscard]] bool setHypsography(int64_t column, std::span<const double> elevation,
+                                      std::span<const double> area,
+                                      std::string &message);
+
+    //! Whether any column carries a storage curve.
+    [[nodiscard]] bool hasHypsography() const noexcept { return m_hasHypsography; }
+
+    /*!
      * \brief Callback that refreshes the column sources before each substep.
      *
      * \param surfaceElevation Current water-surface elevation per column (m).
@@ -523,6 +554,30 @@ private:
 
     //! Edge -> boundary index, or -1 for a reflective wall.
     std::vector<int>    m_edgeBoundary;
+
+    //! Per-column storage curves, empty where a column has none.
+    struct StorageCurve
+    {
+        std::vector<double> elevation;
+        std::vector<double> area;
+    };
+
+    std::vector<StorageCurve> m_storage;
+    bool                      m_hasHypsography = false;
+
+    /*!
+     * \brief Plan area of \p column at stage \p eta, or \p fallback.
+     */
+    [[nodiscard]] double storageArea(int64_t column, double eta,
+                                     double fallback) const noexcept;
+
+    //! Volume held between the bed and \p eta (m³).
+    [[nodiscard]] double storageVolume(int64_t column, double eta, double fallback,
+                                       double bedLevel) const noexcept;
+
+    //! Stage holding \p volume above the bed (m) — the inverse of the above.
+    [[nodiscard]] double stageFromStorage(int64_t column, double volume, double fallback,
+                                          double bedLevel) const noexcept;
     std::vector<double> m_boundaryFlux;
 
     /*!

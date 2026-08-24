@@ -212,6 +212,29 @@ bool LayeredMesh::setHypsography(int64_t column, std::span<const double> elevati
     return true;
 }
 
+namespace {
+
+//! Shared empty table, so the accessors can return a reference either way.
+const std::vector<double> kNoSamples;
+
+} // namespace
+
+const std::vector<double> &LayeredMesh::hypsographyElevation(int64_t column) const
+{
+    if (!m_hasHypsography || m_hypsography.empty())
+        return kNoSamples;
+
+    return m_hypsography[static_cast<size_t>(column)].elevation;
+}
+
+const std::vector<double> &LayeredMesh::hypsographyArea(int64_t column) const
+{
+    if (!m_hasHypsography || m_hypsography.empty())
+        return kNoSamples;
+
+    return m_hypsography[static_cast<size_t>(column)].area;
+}
+
 double LayeredMesh::planArea(int64_t column, double zLevel) const
 {
     if (!m_hasHypsography || m_hypsography.empty())

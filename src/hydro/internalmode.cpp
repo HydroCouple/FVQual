@@ -145,25 +145,6 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
         }
     }
 
-    // Hypsography changes cell volumes, but the external mode still evolves
-    // depth on a constant plan area — `h += dt * dh` with `dh = -flux/area`,
-    // which is the form the HLLC solver and the well-balancedness proof rest
-    // on. Until that becomes a storage equation (F1.5 stage 2), the two modes
-    // would disagree about how much water a column holds, and the surface-flux
-    // residual that guards mode consistency would stop vanishing.
-    //
-    // Refusing is the honest interim. A model that ran anyway would produce
-    // plausible output with a silently broken mass budget, which is the failure
-    // this codebase refuses everywhere else.
-    if (mesh.hasHypsography())
-    {
-        message = "the internal mode does not yet run on a depth-varying plan area: "
-                  "the external mode evolves depth on a constant area, so the two "
-                  "would disagree about column storage (F1.5 stage 2). The mesh's "
-                  "hypsographic volumes are correct and usable on their own.";
-        return false;
-    }
-
     BarotropicOptions externalOptions;
     externalOptions.gravity         = options.gravity;
     externalOptions.waterDensity    = options.referenceDensity;
@@ -177,6 +158,26 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
 
     if (!m_external.setSurface(mesh.surfaceElevation(), message))
         return false;
+
+    // Both modes must agree about how much water a column holds, so the storage
+    // curve goes to the external solver as well as the mesh. Without this the
+    // external mode would raise the surface on a constant area while the mesh
+    // computed volumes on a varying one, and the residual that guards mode
+    // consistency would stop vanishing — which is exactly what the gate checks.
+    if (mesh.hasHypsography())
+    {
+        for (int64_t c = 0; c < mesh.columnCount(); ++c)
+        {
+            const std::vector<double> &elevation = mesh.hypsographyElevation(c);
+            const std::vector<double> &planArea  = mesh.hypsographyArea(c);
+
+            if (elevation.empty())
+                continue;
+
+            if (!m_external.setHypsography(c, elevation, planArea, message))
+                return false;
+        }
+    }
 
     const size_t cells      = static_cast<size_t>(mesh.cellCount());
     const size_t interfaces = static_cast<size_t>(mesh.interfaceSlotCount());

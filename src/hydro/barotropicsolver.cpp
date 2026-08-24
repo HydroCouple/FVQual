@@ -640,6 +640,192 @@ double BarotropicSolver::stableTimeStep() const
                       m_options.maxTimeStep);
 }
 
+bool BarotropicSolver::setHypsography(int64_t column, std::span<const double> elevation,
+                                      std::span<const double> area, std::string &message)
+{
+    if (m_mesh == nullptr)
+    {
+        message = "initialize the solver before setting a storage curve";
+        return false;
+    }
+
+    if (column < 0 || column >= m_columnCount)
+    {
+        message = "column " + std::to_string(column) + " is out of range";
+        return false;
+    }
+
+    if (elevation.size() != area.size() || elevation.size() < 2)
+    {
+        message = "a storage curve needs at least two matching elevation/area samples";
+        return false;
+    }
+
+    for (size_t i = 1; i < elevation.size(); ++i)
+    {
+        if (!(elevation[i] > elevation[i - 1]))
+        {
+            message = "storage-curve elevations must increase strictly";
+            return false;
+        }
+
+        if (area[i] < area[i - 1])
+        {
+            message = "storage area must not decrease with elevation";
+            return false;
+        }
+    }
+
+    if (!(area.front() > 0.0))
+    {
+        // A zero area at the lowest sample divides by zero the moment the pool
+        // reaches it.
+        message = "storage area must be positive at every sampled elevation";
+        return false;
+    }
+
+    m_storage.resize(static_cast<size_t>(m_columnCount));
+
+    StorageCurve &curve = m_storage[static_cast<size_t>(column)];
+
+    curve.elevation.assign(elevation.begin(), elevation.end());
+    curve.area.assign(area.begin(), area.end());
+
+    m_hasHypsography = true;
+
+    message.clear();
+    return true;
+}
+
+double BarotropicSolver::storageArea(int64_t column, double eta,
+                                     double fallback) const noexcept
+{
+    if (!m_hasHypsography || m_storage.empty())
+        return fallback;
+
+    const StorageCurve &curve = m_storage[static_cast<size_t>(column)];
+
+    if (curve.elevation.empty())
+        return fallback;
+
+    if (eta <= curve.elevation.front())
+        return curve.area.front();
+
+    if (eta >= curve.elevation.back())
+        return curve.area.back();
+
+    const auto upper =
+        std::upper_bound(curve.elevation.begin(), curve.elevation.end(), eta);
+
+    const size_t high = static_cast<size_t>(upper - curve.elevation.begin());
+    const size_t low  = high - 1;
+
+    const double span = curve.elevation[high] - curve.elevation[low];
+
+    if (span <= 0.0)
+        return curve.area[low];
+
+    const double fraction = (eta - curve.elevation[low]) / span;
+
+    return curve.area[low] + fraction * (curve.area[high] - curve.area[low]);
+}
+
+double BarotropicSolver::storageVolume(int64_t column, double eta, double fallback,
+                                       double bedLevel) const noexcept
+{
+    if (!m_hasHypsography || m_storage.empty() ||
+        m_storage[static_cast<size_t>(column)].elevation.empty())
+    {
+        return std::max(0.0, eta - bedLevel) * fallback;
+    }
+
+    if (eta <= bedLevel)
+        return 0.0;
+
+    // Exact integral of the piecewise-linear curve from the bed up, split at
+    // every sample in between — the same construction the mesh uses, so the two
+    // agree to the bit rather than to a tolerance.
+    const StorageCurve &curve = m_storage[static_cast<size_t>(column)];
+
+    double total = 0.0;
+    double at    = bedLevel;
+
+    while (at < eta)
+    {
+        double next = eta;
+
+        const auto above =
+            std::upper_bound(curve.elevation.begin(), curve.elevation.end(), at);
+
+        if (above != curve.elevation.end() && *above < next)
+            next = *above;
+
+        total += 0.5 * (storageArea(column, at, fallback) +
+                        storageArea(column, next, fallback)) *
+                 (next - at);
+
+        at = next;
+    }
+
+    return total;
+}
+
+double BarotropicSolver::stageFromStorage(int64_t column, double volume, double fallback,
+                                          double bedLevel) const noexcept
+{
+    if (!m_hasHypsography || m_storage.empty() ||
+        m_storage[static_cast<size_t>(column)].elevation.empty())
+    {
+        return bedLevel + volume / fallback;
+    }
+
+    if (volume <= 0.0)
+        return bedLevel;
+
+    const StorageCurve &curve = m_storage[static_cast<size_t>(column)];
+
+    // Walk the segments accumulating storage, then solve the quadratic inside
+    // the one that contains the target. Closed form rather than bisection: the
+    // area is linear in each segment, so the storage is quadratic and the root
+    // is exact.
+    double accumulated = 0.0;
+    double at          = bedLevel;
+
+    while (true)
+    {
+        const auto above =
+            std::upper_bound(curve.elevation.begin(), curve.elevation.end(), at);
+
+        const bool last = (above == curve.elevation.end());
+        const double next = last ? at + 1.0 : *above;
+
+        const double a0 = storageArea(column, at, fallback);
+        const double a1 = last ? a0 : storageArea(column, next, fallback);
+
+        const double segment = 0.5 * (a0 + a1) * (next - at);
+
+        if (accumulated + segment >= volume || last)
+        {
+            const double remaining = volume - accumulated;
+            const double slope     = last ? 0.0 : (a1 - a0) / (next - at);
+
+            if (std::abs(slope) < 1.0e-12)
+                return at + (a0 > 0.0 ? remaining / a0 : 0.0);
+
+            // (slope/2) d^2 + a0 d - remaining = 0, taking the positive root.
+            const double discriminant = a0 * a0 + 2.0 * slope * remaining;
+
+            if (discriminant <= 0.0)
+                return at;
+
+            return at + (-a0 + std::sqrt(discriminant)) / slope;
+        }
+
+        accumulated += segment;
+        at = next;
+    }
+}
+
 void BarotropicSolver::accumulateFluxes()
 {
     const Mesh::HorizontalMesh &mesh = *m_mesh;
@@ -895,6 +1081,7 @@ bool BarotropicSolver::step(double dt, std::string &message)
     }
 
     const std::vector<double> &area   = m_mesh->faceArea();
+    const std::vector<double> &bed    = m_mesh->faceBed();
     const bool                 source = !m_columnSource.empty();
 
     accumulateFluxes();
@@ -903,6 +1090,55 @@ bool BarotropicSolver::step(double dt, std::string &message)
     for (int64_t c = 0; c < m_columnCount; ++c)
     {
         const size_t i = static_cast<size_t>(c);
+
+        // Continuity is a statement about *volume*: dV/dt = -sum of fluxes. The
+        // usual `dh/dt = -flux/A` only follows when A does not depend on stage.
+        //
+        // With a storage curve, updating the stage using the area at the start
+        // of the step is not enough. That leaves an error of order
+        // `(dEta)^2 dA/dz` against the exact integral the mesh computes, and the
+        // mode-consistency residual — which is meant to be a round-off identity
+        // — was measured at 7.7e-7 rather than 1e-15. So the volume is what
+        // advances, and the stage follows by inverting the curve. Then the two
+        // modes are computing the same integral and agree exactly.
+        //
+        // Momentum is a separate question and is *not* corrected: with area
+        // varying inside a cell these become the sub-grid shallow-water
+        // equations, in which conveyance is its own function of stage and
+        // momentum carries a pressure term from the sloping banks. See the
+        // class note.
+        if (m_hasHypsography)
+        {
+            const double bedLevel = bed[i];
+            const double volumeIn =
+                dt * (m_dh[i] * area[i] +
+                      (source ? m_columnSource[i] : 0.0));
+
+            const double updated =
+                storageVolume(c, m_eta[i], area[i], bedLevel) + volumeIn;
+
+            m_h[i] = stageFromStorage(c, std::max(0.0, updated), area[i], bedLevel) -
+                     bedLevel;
+
+            m_hu[i] += dt * m_dhu[i];
+            m_hv[i] += dt * m_dhv[i];
+
+            if (source && m_columnSource[i] < 0.0)
+            {
+                // A withdrawal carries the local velocity away with it, as in
+                // the constant-area branch below.
+                const double rate =
+                    m_columnSource[i] / storageArea(c, m_eta[i], area[i]);
+
+                m_hu[i] += dt * rate * m_u[i];
+                m_hv[i] += dt * rate * m_v[i];
+            }
+
+            if (m_h[i] < 0.0)
+                m_h[i] = 0.0;
+
+            continue;
+        }
 
         m_h[i] += dt * m_dh[i];
         m_hu[i] += dt * m_dhu[i];

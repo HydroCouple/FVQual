@@ -430,29 +430,43 @@ TEST(Hypsography, TheCurveIsClampedOutsideItsSamples)
         EXPECT_GT(column.layered.planArea(0, z), 0.0) << "at " << z;
 }
 
-TEST(Hypsography, TheInternalModeRefusesAHypsographicMeshForNow)
+TEST(Hypsography, ModeConsistencyHoldsOnAHypsographicMesh)
 {
-    // Stage 1 makes the mesh's volumes right. It does not yet make the two
-    // modes agree about them: the external solver still evolves depth on a
-    // constant plan area, which is the form its well-balancedness rests on.
-    // Running anyway would give plausible output with a silently broken mass
-    // budget, so it is refused until stage 2 lands.
+    // The gate stage 2 exists to satisfy. The vertical velocity is integrated up
+    // from a no-flux bed, so its value at the free surface vanishes only if the
+    // internal mode's cell volumes and the external mode's stage agree about how
+    // much water a column holds. With a storage curve those are two different
+    // calculations of the same thing, and they have to match.
     HorizontalMesh horizontal;
     LayeredMesh    layered;
 
     std::string message;
 
-    ASSERT_TRUE(horizontal.build(Testing::channelStrip(3, 300.0, 40.0), message))
+    ASSERT_TRUE(horizontal.build(Testing::channelStrip(6, 600.0, 40.0), message))
         << message;
 
     for (int64_t f = 0; f < horizontal.faceCount(); ++f)
-        horizontal.faceBed()[static_cast<size_t>(f)] = -10.0;
+        horizontal.faceBed()[static_cast<size_t>(f)] = -20.0;
 
     SigmaSpec spec;
-    spec.layerCount        = 4;
+    spec.layerCount        = 6;
     spec.minLayerThickness = 0.0;
 
     ASSERT_TRUE(layered.build(horizontal, spec, 0.0, message)) << message;
+
+    // A steep taper, so the curve is doing real work rather than sitting near
+    // the constant it replaced.
+    for (int64_t c = 0; c < layered.columnCount(); ++c)
+    {
+        const double top = horizontal.faceArea()[static_cast<size_t>(c)];
+
+        ASSERT_TRUE(layered.setHypsography(c, {{-20.0, 5.0}}, {{0.15 * top, top}},
+                                           message))
+            << message;
+    }
+
+    const std::vector<double> surface(static_cast<size_t>(layered.columnCount()), 0.0);
+    ASSERT_TRUE(layered.updateSurface(surface, message)) << message;
 
     FVQual::State::SpeciesRegistry registry;
     ASSERT_GE(registry.addTemperature(10.0, message), 0) << message;
@@ -460,22 +474,188 @@ TEST(Hypsography, TheInternalModeRefusesAHypsographicMeshForNow)
     FVQual::State::StateStore state;
     state.allocate(layered, registry);
 
-    FVQual::Hydro::InternalModeSolver solver;
+    for (int64_t cell = 0; cell < layered.cellCount(); ++cell)
+        state.speciesAt(registry.temperatureIndex(), cell) = 10.0;
+
+    FVQual::Hydro::InternalModeSolver  solver;
     FVQual::Hydro::InternalModeOptions options;
+    options.manningN = 0.0;
 
-    // Without a curve it initializes, as it always has.
-    ASSERT_TRUE(solver.initialize(layered, state, registry, options, message))
+    ASSERT_TRUE(solver.initialize(layered, state, registry, options, message)) << message;
+
+    // Push water in at one end so the surface actually moves and the storage
+    // curve is exercised, rather than sitting at rest where any formulation
+    // would agree.
+    FVQual::Forcing::Source inflow;
+    inflow.column    = 0;
+    inflow.discharge = 40.0;
+    inflow.placement = FVQual::Forcing::Placement::Uniform;
+
+    ASSERT_GE(solver.sources().add(inflow, message), 0) << message;
+
+    double worst = 0.0;
+
+    for (int i = 0; i < 20; ++i)
+    {
+        ASSERT_TRUE(solver.step(5.0, message)) << message;
+
+        worst = std::max(worst, std::abs(solver.diagnostics().surfaceFluxResidual));
+    }
+
+    EXPECT_LT(worst, 1.0e-10) << "surface flux residual reached " << worst;
+
+    // The surface really did move, or the gate is trivial.
+    EXPECT_GT(layered.surfaceElevation()[0], 1.0e-3);
+}
+
+TEST(Hypsography, StillWaterStaysStillOnAHypsographicMesh)
+{
+    // Well-balancedness is the property the whole barotropic solver is built
+    // around, and a storage curve is a change to the continuity update — so it
+    // is exactly the sort of change that breaks it. A lake at rest over sloping
+    // bathymetry must still not develop currents.
+    HorizontalMesh horizontal;
+    LayeredMesh    layered;
+
+    std::string message;
+
+    ASSERT_TRUE(horizontal.build(Testing::channelStrip(8, 800.0, 40.0), message))
         << message;
 
-    // With one, it refuses and says why.
-    ASSERT_TRUE(layered.setHypsography(0, {{-10.0, 0.0}}, {{100.0, 900.0}}, message))
-        << message;
+    // Sloping bed, so the bed-slope source term is genuinely active.
+    for (int64_t f = 0; f < horizontal.faceCount(); ++f)
+    {
+        const double x = horizontal.faceCentroidX()[static_cast<size_t>(f)];
+
+        horizontal.faceBed()[static_cast<size_t>(f)] = -30.0 + 0.02 * x;
+    }
+
+    SigmaSpec spec;
+    spec.layerCount        = 5;
+    spec.minLayerThickness = 0.0;
+
+    ASSERT_TRUE(layered.build(horizontal, spec, 0.0, message)) << message;
+
+    for (int64_t c = 0; c < layered.columnCount(); ++c)
+    {
+        const double top = horizontal.faceArea()[static_cast<size_t>(c)];
+        const double bed = horizontal.faceBed()[static_cast<size_t>(c)];
+
+        ASSERT_TRUE(layered.setHypsography(c, {{bed, 5.0}}, {{0.2 * top, top}}, message))
+            << message;
+    }
 
     const std::vector<double> surface(static_cast<size_t>(layered.columnCount()), 0.0);
     ASSERT_TRUE(layered.updateSurface(surface, message)) << message;
 
-    FVQual::Hydro::InternalModeSolver second;
+    FVQual::State::SpeciesRegistry registry;
+    ASSERT_GE(registry.addTemperature(10.0, message), 0) << message;
 
-    EXPECT_FALSE(second.initialize(layered, state, registry, options, message));
-    EXPECT_NE(message.find("depth-varying plan area"), std::string::npos) << message;
+    FVQual::State::StateStore state;
+    state.allocate(layered, registry);
+
+    for (int64_t cell = 0; cell < layered.cellCount(); ++cell)
+        state.speciesAt(registry.temperatureIndex(), cell) = 10.0;
+
+    FVQual::Hydro::InternalModeSolver  solver;
+    FVQual::Hydro::InternalModeOptions options;
+    options.manningN = 0.0;
+
+    ASSERT_TRUE(solver.initialize(layered, state, registry, options, message)) << message;
+
+    for (int i = 0; i < 20; ++i)
+        ASSERT_TRUE(solver.step(5.0, message)) << message;
+
+    // The surface has not moved and nothing is flowing.
+    for (int64_t c = 0; c < layered.columnCount(); ++c)
+    {
+        EXPECT_NEAR(layered.surfaceElevation()[static_cast<size_t>(c)], 0.0, 1.0e-12)
+            << "column " << c << " surface drifted";
+    }
+
+    EXPECT_LT(solver.diagnostics().maxHorizontalVelocity, 1.0e-12)
+        << "still water developed a current of "
+        << solver.diagnostics().maxHorizontalVelocity << " m/s";
+}
+
+TEST(Hypsography, TheStageFollowsTheStorageCurveWhenWaterIsAdded)
+{
+    // The inverse in action. A known volume goes in; the stage that comes out
+    // must be the one the curve implies, not the one a constant area would.
+    // For a linear taper A(z) = a + s (z - bed), V = a d + (s/2) d^2, so
+    // d = (-a + sqrt(a^2 + 2 s V)) / s.
+    HorizontalMesh horizontal;
+    LayeredMesh    layered;
+
+    std::string message;
+
+    ASSERT_TRUE(horizontal.build(Testing::channelStrip(1, 100.0, 50.0), message))
+        << message;
+
+    horizontal.faceBed()[0] = -20.0;
+
+    SigmaSpec spec;
+    spec.layerCount        = 4;
+    spec.minLayerThickness = 0.0;
+
+    ASSERT_TRUE(layered.build(horizontal, spec, -10.0, message)) << message;
+
+    const double top     = horizontal.faceArea()[0];
+    const double bedArea = 0.25 * top;
+
+    ASSERT_TRUE(layered.setHypsography(0, {{-20.0, 0.0}}, {{bedArea, top}}, message))
+        << message;
+
+    const std::vector<double> start(1, -10.0);
+    ASSERT_TRUE(layered.updateSurface(start, message)) << message;
+
+    FVQual::State::SpeciesRegistry registry;
+    ASSERT_GE(registry.addTemperature(10.0, message), 0) << message;
+
+    FVQual::State::StateStore state;
+    state.allocate(layered, registry);
+    state.speciesAt(registry.temperatureIndex(), 0) = 10.0;
+
+    for (int64_t cell = 0; cell < layered.cellCount(); ++cell)
+        state.speciesAt(registry.temperatureIndex(), cell) = 10.0;
+
+    FVQual::Hydro::InternalModeSolver  solver;
+    FVQual::Hydro::InternalModeOptions options;
+    options.manningN = 0.0;
+
+    ASSERT_TRUE(solver.initialize(layered, state, registry, options, message)) << message;
+
+    const double slope    = (top - bedArea) / 20.0;
+    const double before   = 10.0; // depth above the bed at the start
+    const double vBefore  = bedArea * before + 0.5 * slope * before * before;
+
+    // A known inflow for a known time.
+    constexpr double discharge = 50.0;
+    constexpr double dt        = 5.0;
+    constexpr int    steps     = 20;
+
+    FVQual::Forcing::Source inflow;
+    inflow.column    = 0;
+    inflow.discharge = discharge;
+    inflow.placement = FVQual::Forcing::Placement::Uniform;
+
+    ASSERT_GE(solver.sources().add(inflow, message), 0) << message;
+
+    for (int i = 0; i < steps; ++i)
+        ASSERT_TRUE(solver.step(dt, message)) << message;
+
+    const double vAfter = vBefore + discharge * dt * steps;
+
+    const double depth =
+        (-bedArea + std::sqrt(bedArea * bedArea + 2.0 * slope * vAfter)) / slope;
+
+    EXPECT_NEAR(layered.surfaceElevation()[0], -20.0 + depth, 1.0e-8)
+        << "stage " << layered.surfaceElevation()[0] << " against " << -20.0 + depth;
+
+    // A constant-area answer would be visibly different, or this gate would pass
+    // on the old formulation too.
+    const double naive = -10.0 + discharge * dt * steps / top;
+
+    EXPECT_GT(std::abs((-20.0 + depth) - naive), 0.05)
+        << "the curve made no difference; the gate is vacuous";
 }
