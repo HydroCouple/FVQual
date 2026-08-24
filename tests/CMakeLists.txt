@@ -33,6 +33,7 @@ add_executable(fvqual_tests
     test_lightfield.cpp
     test_settling.cpp
     test_templates.cpp
+    test_reactionfile.cpp
     test_statestore.cpp
     test_ugrid_roundtrip.cpp
 )

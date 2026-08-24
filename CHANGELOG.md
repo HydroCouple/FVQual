@@ -521,6 +521,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A rate builds in an assumed depth, and the model would then reaerate
   differently for no physical reason when the reservoir is drawn down.
 
+### Added — Phase 6 (F6.3b, text-configured reaction networks)
+
+- `FVQual::Kinetics::ReactionFile`: a `.rxn` text format with `[SPECIES]`,
+  `[CONSTANTS]`, `[RATES]`, `[SETTLING]` and `[LIGHT]` sections, so changing a
+  constituent model no longer means recompiling. This is the other half of
+  making the network data rather than code.
+- **Numeric fields are arithmetic expressions**, evaluated by the same parser
+  the rate laws use: `0.23/86400` rather than `2.6620370370e-6`. It is the one
+  place the file can undo the per-day trap without guessing which constants in
+  an arbitrary rate law are rates.
+- Failures report a line number and what was wrong, and parsing commits to the
+  object only on success — a rejected file leaves nothing half-applied.
+- Two format flaws that gates caught before the format shipped, both recorded in
+  the header rather than quietly patched:
+  - Numeric fields may not contain spaces, because a settling record has an
+    optional field *after* the number and whitespace is the only delimiter.
+    `TSS 1.0 / 86400 TSS_BED` parsed the receiver as part of the velocity.
+  - The scope on a rate law is **mandatory**. An optional field in front of a
+    free-form expression is unparseable: `DO   0 - k * CBOD` is
+    indistinguishable from a law scoped to something named `0`. Requiring it
+    also makes a model file state where each process acts.
+- The central gate is equivalence rather than parsing: a file expressing
+  first-order decay and the C++ template expressing the same model must produce
+  bit-identical concentrations, and both must equal the closed form.
+
 ### Known limitations
 
 - The expression parser binds unary minus tighter than exponentiation, so

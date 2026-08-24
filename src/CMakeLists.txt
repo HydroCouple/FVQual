@@ -20,6 +20,7 @@ add_library(fvqual_core
     kinetics/reactionnetwork.cpp
     kinetics/lightfield.cpp
     kinetics/templates.cpp
+    kinetics/reactionfile.cpp
     transport/settling.cpp
     forcing/transfers.cpp
     state/speciesregistry.cpp
