@@ -31,6 +31,7 @@ add_executable(fvqual_tests
     test_kinetics_numerics.cpp
     test_reactionnetwork.cpp
     test_lightfield.cpp
+    test_settling.cpp
     test_statestore.cpp
     test_ugrid_roundtrip.cpp
 )

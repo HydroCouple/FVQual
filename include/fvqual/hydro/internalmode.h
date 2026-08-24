@@ -64,6 +64,7 @@
 #include "fvqual/forcing/structures.h"
 #include "fvqual/forcing/transfers.h"
 #include "fvqual/transport/euleriantransport.h"
+#include "fvqual/transport/settling.h"
 #include "fvqual/mesh/layeredmesh.h"
 #include "fvqual/state/statestore.h"
 
@@ -185,6 +186,7 @@ struct FVQual_EXPORT StepProfile
     int64_t geometry   = 0; //!< Surface update and mode reconciliation.
     int64_t fluxes     = 0; //!< Layer and vertical flux construction.
     int64_t transport  = 0; //!< Scalar advection, diffusion, heat flux.
+    int64_t settling   = 0; //!< Particulate settling and the benthic handoff.
     int64_t reactions  = 0; //!< Operator-split kinetics.
     int64_t total      = 0; //!< The whole step.
 
@@ -367,6 +369,19 @@ public:
     }
 
     /*!
+     * \brief Per-species settling velocities and their benthic destinations.
+     *
+     * Applied after transport and before the reactions, so a benthic rate law
+     * acts on material that has already arrived this step rather than on last
+     * step's sediment.
+     */
+    [[nodiscard]] Transport::SettlingSet &settling() noexcept { return m_settling; }
+    [[nodiscard]] const Transport::SettlingSet &settling() const noexcept
+    {
+        return m_settling;
+    }
+
+    /*!
      * \brief Irradiance down each column, and its optical properties.
      *
      * Recomputed each step from the transported field, immediately before the
@@ -434,6 +449,7 @@ private:
     Forcing::StructureSet             m_structures;
     Forcing::OutletGroupSet           m_groups;
     Forcing::TransferSet              m_transfers;
+    Transport::SettlingSet            m_settling;
     Kinetics::ReactionNetwork         m_reactions;
     Kinetics::LightField              m_light;
     Kinetics::LightOptions            m_lightOptions;

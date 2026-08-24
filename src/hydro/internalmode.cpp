@@ -194,6 +194,7 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     // to set self-shading coefficients before compiling, and that would then
     // write into a field that does not exist yet.
     m_light.initialize(mesh, species);
+    m_settling.initialize(species);
     m_edgeLayerFlux.assign(edgeLayers, 0.0);
     m_verticalFlux.assign(interfaces, 0.0);
     m_oldVolume.assign(cells, 0.0);
@@ -1280,6 +1281,14 @@ bool InternalModeSolver::step(double dt, std::string &message)
         ScopedTimer timer(m_profile.transport);
         transportScalars(dt);
         applySurfaceHeatFlux(dt);
+    }
+
+    // 8b. Particulates sink. Before the reactions rather than after, so a
+    // benthic rate law acts on material that arrived this step.
+    if (m_settling.any())
+    {
+        ScopedTimer timer(m_profile.settling);
+        m_settling.apply(mesh, *m_state, dt);
     }
 
     // 9. Reactions act on the transported field: first-order Lie splitting.

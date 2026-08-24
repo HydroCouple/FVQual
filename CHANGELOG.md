@@ -417,6 +417,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cell, checked against depth rather than a layer index so a mask marking the
   surface fails.
 
+### Added — Phase 6 (F6.2c, settling and the benthic handoff)
+
+- `FVQual::Transport::SettlingSet`: per-species downward settling, applied after
+  transport and before the reactions so a benthic rate law acts on material that
+  arrived this step.
+- **Solved implicitly, by a single forward substitution.** Downward-only
+  upwinding makes the matrix lower triangular, so the implicit solve costs the
+  same as an explicit update and buys three things: no CFL constraint (the
+  binding case is a thin surface sigma layer, not a fast-settling species —
+  0.1 m and 10 m/d caps an explicit step near 900 s), unconditional positivity,
+  and exact conservation, because what leaves the column telescopes to
+  `w dt C_bed`, which is what the bed receives. The cost is extra numerical
+  diffusion, which is recorded rather than glossed.
+- Settled material accumulates in a benthic species measured per unit **area**,
+  matching the `RateScope::Bed` convention: a benthic store expressed as a
+  concentration in the bottom cell would change value whenever the layering did.
+  A transported receiver is refused, since the sediment would be advected away.
+- With no receiver configured, the mass is tallied and reported. A model may
+  legitimately not track sediment; what it may not do is lose mass silently,
+  because an unreported loss is indistinguishable from a conservation bug.
+- Gates: water-plus-sediment conserved to 1e-12 checked every step; positive and
+  conservative at **100x** the explicit stability limit (the gate that earns the
+  implicit solve — an explicit ablation fails it); the single-layer closed form
+  of the scheme; L1 convergence at first order against the exact translated
+  profile; and direction, pinned separately because a sign error would give a
+  perfectly conservative, perfectly stable, upside-down model.
+
 ### Known limitations
 
 - `RateScope` has no `Surface` member yet, so surface-specific processes —
