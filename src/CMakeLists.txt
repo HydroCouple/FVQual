@@ -15,6 +15,8 @@ add_library(fvqual_core
     forcing/sources.cpp
     forcing/structures.cpp
     forcing/outletgroups.cpp
+    kinetics/expression.cpp
+    kinetics/odesolver.cpp
     forcing/transfers.cpp
     state/speciesregistry.cpp
     state/statestore.cpp

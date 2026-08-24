@@ -50,6 +50,25 @@ retained in the header of `docs/custom/css/doxygen-awesome.css`. The same theme
 and Doxygen release are used by HydroCoupleSDK and the HydroCouple interface
 definitions, so the three documentation sets render identically.
 
+## openswmm.engine — shared lineage, not a dependency
+
+`include/fvqual/kinetics/expression.h`, `src/kinetics/expression.cpp`,
+`include/fvqual/kinetics/odesolver.h`, and `src/kinetics/odesolver.cpp` began as
+`src/engine/math/MathExpr.*` and `src/engine/math/OdeSolver.*` in
+[openswmm.engine](https://github.com/HydroCouple/openswmm.engine), which is
+Apache-2.0.
+
+They are reproduced here under MIT **by the copyright holder**, who holds the
+rights to both projects. This is a relicensing of the author's own work, not a
+redistribution under Apache-2.0, so FVQual remains a single-licence project and
+carries no NOTICE obligation for them.
+
+The two copies are independent from here on but are expected to stay close
+enough that a fix in one can be carried across by hand. One such fix already
+exists only here: the expression parser accepted malformed input — `""`,
+`"2 +"`, `"* 3"` all parsed as valid — and now rejects any postfix sequence that
+does not evaluate to exactly one value. That hardening belongs upstream too.
+
 ## HydroCoupleSDK / HydroCouple
 
 MIT License, Copyright (c) 2014-2026 Caleb Buahin. Consumed as a build

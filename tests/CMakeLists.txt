@@ -28,6 +28,7 @@ add_executable(fvqual_tests
     test_transfers.cpp
     test_openboundaries.cpp
     test_macdonald.cpp
+    test_kinetics_numerics.cpp
     test_statestore.cpp
     test_ugrid_roundtrip.cpp
 )

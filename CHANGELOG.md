@@ -300,7 +300,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `m_dhv` was dead work left over from the scattering version. Removed;
   only the boundary-flux tally still needs clearing.
 
+### Added — Phase 6 (F6.1a, kinetics numerics)
+
+- `FVQual::Kinetics::Expression`: Shunting-yard parser and stack evaluator for
+  reaction-rate expressions, with name binding and a bound fast path.
+- `FVQual::Kinetics::integrate`: adaptive RK45 Cash-Karp integrator, the
+  substrate for operator-split reaction kinetics.
+- Both relicensed to MIT from the author's openswmm.engine (see
+  THIRD_PARTY_LICENSES.md), and verified in this build rather than assumed from
+  the origin: expressions against the same formulas evaluated by the compiler,
+  the integrator against closed-form solutions for exponential decay, coupled
+  sequential decay, and a stiff pair.
+- **Parser hardening:** malformed expressions (`""`, `"2 +"`, `"* 3"`) parsed as
+  valid, which for a user-authored rate law means a model that runs and is
+  quietly wrong. `parse()` now rejects any postfix sequence that does not
+  evaluate to exactly one value.
+
 ### Known limitations
+
+- The expression parser binds unary minus tighter than exponentiation, so
+  `-3 ^ 2` is 9, as in Excel, rather than -9 as in Python and mathematical
+  notation. Inherited from the shared openswmm lineage and pinned by a test
+  rather than changed, because changing it would silently give a different
+  answer to an expression shared between the two projects.
 
 - Hoisting a single OpenMP parallel region around the barotropic substep, to
   replace its five per-loop regions, was implemented and then **reverted**. An
