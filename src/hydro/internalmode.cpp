@@ -159,20 +159,6 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     if (!m_external.setSurface(mesh.surfaceElevation(), message))
         return false;
 
-    // Open boundaries are a barotropic feature only, for now. The external mode
-    // would happily pass water through them, but the internal mode has no story
-    // for what that water is *made of* — an inflow needs a composition per
-    // layer and an outflow has to export ambient values — so a three-dimensional
-    // run would silently transport nonsense across the opening. Refusing is the
-    // honest interim (F2.3b).
-    if (m_external.hasOpenBoundaries())
-    {
-        message = "the internal mode does not yet support open boundaries; "
-                  "scalar transport across an opening is not defined (F2.3b). "
-                  "Use the barotropic solver directly, or close the boundary.";
-        return false;
-    }
-
     const size_t cells      = static_cast<size_t>(mesh.cellCount());
     const size_t interfaces = static_cast<size_t>(mesh.interfaceSlotCount());
     const size_t edgeLayers = static_cast<size_t>(mesh.horizontal().edgeCount()) *
@@ -912,6 +898,10 @@ void InternalModeSolver::transportScalars(double dt)
         // Advection is delegated to the Eulerian engine (MUSCL + Zalesak
         // flux correction). It receives fluxes rather than velocities
         // because the fluxes are what mode splitting already reconciled.
+        // An open boundary's ambient composition depends on the placement
+        // weights, which distribute() has now computed for this step.
+        applyBoundaryComposition(s);
+
         m_sources.inflowConcentration(mesh, s, m_temperatureIndex, m_sourceValue);
 
         m_transport.advect(mesh, m_oldVolume, m_edgeLayerFlux, m_verticalFlux,
@@ -1076,6 +1066,238 @@ void InternalModeSolver::updateCellDepth()
             m_cellDepth[static_cast<size_t>(mesh.cell(c, k))] =
                 surface - 0.5 * (mesh.z(c, k) + mesh.z(c, k + 1));
         }
+    }
+}
+
+bool InternalModeSolver::bindOpenBoundaries(Forcing::Placement placement,
+                                            std::string &message)
+{
+    if (m_mesh == nullptr)
+    {
+        message = "internal mode has not been initialized";
+        return false;
+    }
+
+    if (!m_boundaryLinks.empty())
+    {
+        message = "open boundaries are already bound";
+        return false;
+    }
+
+    const std::vector<int> &edgeBoundary = m_external.edgeBoundary();
+
+    if (edgeBoundary.empty() || !m_external.hasOpenBoundaries())
+    {
+        message = "no open boundaries have been added to the external mode";
+        return false;
+    }
+
+    const Mesh::HorizontalMesh &horizontal = m_mesh->horizontal();
+    const std::vector<int64_t> &edgeLeft   = horizontal.edgeLeftFace();
+    const std::vector<int64_t> &edgeRight  = horizontal.edgeRightFace();
+
+    // One source per (boundary, column). A boundary may span several columns
+    // and a column may sit on more than one boundary, so neither alone is the
+    // right key.
+    for (int64_t e = 0; e < horizontal.edgeCount(); ++e)
+    {
+        const int boundary = edgeBoundary[static_cast<size_t>(e)];
+
+        if (boundary < 0)
+            continue;
+
+        // A boundary edge has no right-hand face by construction; the interior
+        // column is always the left one.
+        const int64_t column =
+            edgeRight[static_cast<size_t>(e)] == Mesh::kNoFace
+                ? edgeLeft[static_cast<size_t>(e)]
+                : edgeRight[static_cast<size_t>(e)];
+
+        auto link = std::find_if(m_boundaryLinks.begin(), m_boundaryLinks.end(),
+                                 [&](const BoundaryLink &l) {
+                                     return l.boundary == boundary && l.column == column;
+                                 });
+
+        if (link == m_boundaryLinks.end())
+        {
+            Forcing::Source source;
+            source.column              = column;
+            source.discharge           = 0.0;
+            source.placement           = placement;
+            source.externallyAccounted = true;
+
+            const int index = m_sources.add(source, message);
+
+            if (index < 0)
+                return false;
+
+            BoundaryLink created;
+            created.boundary        = boundary;
+            created.column          = column;
+            created.source          = index;
+            created.inflowPlacement = placement;
+
+            m_boundaryLinks.push_back(std::move(created));
+            link = std::prev(m_boundaryLinks.end());
+        }
+
+        link->edges.push_back(e);
+    }
+
+    if (m_boundaryLinks.empty())
+    {
+        message = "the external mode reports open boundaries but no edge carries one";
+        return false;
+    }
+
+    // NaN marks "ambient", which is the default: an unconfigured boundary
+    // carries the receiving column's own values and so is transparent to
+    // constituents rather than a source of distilled water.
+    m_boundaryValue.assign(static_cast<size_t>(m_external.boundaryCount()) *
+                               static_cast<size_t>(m_species->count()),
+                           std::numeric_limits<double>::quiet_NaN());
+
+    message.clear();
+    return true;
+}
+
+bool InternalModeSolver::setBoundaryValue(int boundary, const std::string &speciesId,
+                                          double value, std::string &message)
+{
+    if (m_boundaryLinks.empty())
+    {
+        message = "open boundaries have not been bound; call bindOpenBoundaries()";
+        return false;
+    }
+
+    if (boundary < 0 || boundary >= m_external.boundaryCount())
+    {
+        message = "boundary index " + std::to_string(boundary) + " is out of range";
+        return false;
+    }
+
+    const int species = speciesIndex(speciesId);
+
+    if (species < 0)
+    {
+        message = "species '" + speciesId + "' is not registered";
+        return false;
+    }
+
+    m_boundaryValue[static_cast<size_t>(boundary) *
+                        static_cast<size_t>(m_species->count()) +
+                    static_cast<size_t>(species)] = value;
+
+    message.clear();
+    return true;
+}
+
+bool InternalModeSolver::clearBoundaryValue(int boundary, const std::string &speciesId,
+                                            std::string &message)
+{
+    return setBoundaryValue(boundary, speciesId,
+                            std::numeric_limits<double>::quiet_NaN(), message);
+}
+
+double InternalModeSolver::boundaryVolume(int boundary) const
+{
+    double total = 0.0;
+
+    for (const BoundaryLink &link : m_boundaryLinks)
+    {
+        if (link.boundary == boundary)
+            total += link.volume;
+    }
+
+    return total;
+}
+
+void InternalModeSolver::refreshBoundarySources(double dt)
+{
+    if (m_boundaryLinks.empty())
+        return;
+
+    const std::vector<double> &accumulated = m_external.accumulatedEdgeVolume();
+
+    std::string message;
+
+    for (BoundaryLink &link : m_boundaryLinks)
+    {
+        double volume = 0.0;
+
+        for (int64_t e : link.edges)
+        {
+            // The edge volume is signed left-to-right and a boundary edge's
+            // normal points out of the domain, so entering water is negative
+            // there and positive here.
+            volume -= accumulated[static_cast<size_t>(e)];
+        }
+
+        link.volume = volume;
+
+        // The placement follows the sign of the flow, and has to: the
+        // configured placement describes where *arriving* water belongs, and a
+        // density-matched search has no meaning for water leaving. Measured
+        // rather than reasoned — a density placement applied to the outflow
+        // left the mode-consistency residual at 1.2e-2 where uniform gives
+        // 1e-15, because the withdrawal was being placed somewhere the volume
+        // change was not.
+        //
+        // Outflow leaves uniformly over the column. A boundary has no outlet
+        // elevation or width, so the selective-withdrawal treatment that a real
+        // port gets is not available to it; if that matters for a particular
+        // opening, model it as a structure rather than a boundary.
+        (void)m_sources.setPlacement(link.source,
+                                     volume > 0.0 ? link.inflowPlacement
+                                                  : Forcing::Placement::Uniform,
+                                     message);
+
+        // The external mode moved this volume over the interval it accumulated
+        // across, which is the internal step; the source is a rate.
+        (void)m_sources.setDischarge(link.source, volume / dt, message);
+    }
+}
+
+void InternalModeSolver::applyBoundaryComposition(int species)
+{
+    if (m_boundaryLinks.empty())
+        return;
+
+    const int count = m_species->count();
+
+    std::string message;
+
+    for (const BoundaryLink &link : m_boundaryLinks)
+    {
+        if (link.volume <= 0.0)
+            continue; // A withdrawal carries ambient values by construction.
+
+        const double prescribed =
+            m_boundaryValue[static_cast<size_t>(link.boundary) *
+                                static_cast<size_t>(count) +
+                            static_cast<size_t>(species)];
+
+        // Ambient: the inflow arrives carrying exactly what the layers it is
+        // being placed into already hold, so it changes the volume and not the
+        // chemistry. That has to be the *placement-weighted* mean rather than
+        // the column mean — an inflow spread by density into the hypolimnion
+        // and given the whole column's average would import epilimnion water to
+        // the bed, which is an artefact, not a neutral boundary.
+        //
+        // It also has to be computed here rather than when the discharge is
+        // set: the weights come from distribute(), which has not run for this
+        // step's discharges at that point. Reading them early returned zero
+        // weights and so a zero ambient value — an open boundary quietly
+        // importing distilled water, which is exactly the failure the ambient
+        // default exists to avoid.
+        const double value =
+            std::isnan(prescribed)
+                ? m_sources.weightedMean(*m_mesh, link.source,
+                                         m_state->speciesBlock(species))
+                : prescribed;
+
+        (void)m_sources.setInflowValue(link.source, species, m_temperatureIndex, value,
+                                       message);
     }
 }
 
@@ -1252,6 +1474,9 @@ bool InternalModeSolver::step(double dt, std::string &message)
     //     giving it the end-of-step rating would move a different volume of
     //     water than the free surface just did, and the two modes would
     //     disagree about a spillway by exactly the amount the head changed.
+    const bool restated = (m_structures.count() > 0 && dt > 0.0) ||
+                          !m_boundaryLinks.empty();
+
     if (m_structures.count() > 0 && dt > 0.0)
     {
         for (int s = 0; s < m_structures.count(); ++s)
@@ -1261,7 +1486,18 @@ bool InternalModeSolver::step(double dt, std::string &message)
             if (!m_sources.setDischarge(m_structures.sourceIndex(s), mean, message))
                 return false;
         }
+    }
 
+    // 4c. An open boundary is known only after the fact, for the same reason a
+    //     structure is: how much water crossed it is what the subcycle worked
+    //     out, not something stated in advance. So its source is set here from
+    //     the volume the external mode actually passed, and redistributed with
+    //     the rest.
+    if (!m_boundaryLinks.empty() && dt > 0.0)
+        refreshBoundarySources(dt);
+
+    if (restated)
+    {
         m_sources.distribute(mesh, m_state->density, m_options.gravity,
                              m_options.referenceDensity, m_cellSource, m_columnSource);
     }

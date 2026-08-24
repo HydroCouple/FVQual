@@ -546,7 +546,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   first-order decay and the C++ template expressing the same model must produce
   bit-identical concentrations, and both must equal the closed form.
 
+### Added — Phase 2 (F2.3b, 3-D transport across open boundaries)
+
+- The internal mode no longer refuses open boundaries. `bindOpenBoundaries()`
+  turns each (boundary, adjacent column) pair into a `Forcing::Source` whose
+  discharge is refreshed each step from the volume the external mode actually
+  passed — so boundary water rides the placement, composition and conservation
+  machinery a tributary inflow already uses. This unblocks tributary inflows and
+  so Phase 8.
+- **A source, not an edge flux.** The external mode solves a depth-averaged
+  problem, so all it knows about a boundary is the depth-integrated volume that
+  crossed it; how that spreads over the column is a modelling choice either way.
+  A column source makes the choice explicit and selectable rather than burying
+  it in a flux reconstruction, and keeps mode consistency for free because the
+  vertical velocity is already diagnosed from continuity *including* sources.
+- **Inflow is density-placed by default**, so a cold tributary plunges to its own
+  density rather than mixing across the surface — the behaviour that
+  distinguishes a stratified reservoir model from a mixed one, and what W2 does.
+  `Placement::Uniform` remains selectable per boundary.
+- **Outflow always leaves uniformly.** A density-matched search has no meaning
+  for water leaving, and a boundary has no outlet elevation or width, so the
+  selective-withdrawal treatment a real port gets is not available to it. Model
+  such an opening as a structure instead.
+- **An unset boundary carries ambient values**, so it is transparent to
+  constituents rather than a source of distilled water — with a gate proving a
+  uniform field crosses unchanged. `setBoundaryValue()` prescribes a composition
+  per (boundary, species).
+- `Source::externallyAccounted` marks water the external mode has already moved,
+  keeping it out of the column total handed back to the depth-averaged solver.
+- Three defects the gates caught, all of which would have run and looked
+  plausible: boundary water counted twice (once as flux, once as source); the
+  density placement applied to outflow, leaving the mode-consistency residual at
+  1.2e-2 against 1e-15; and the ambient composition read before the placement
+  weights were current, evaluating to zero and importing distilled water.
+
 ### Known limitations
+
+- An open boundary cannot do selective withdrawal, and its inflow composition is
+  uniform over the boundary rather than specified per layer.
 
 - The expression parser binds unary minus tighter than exponentiation, so
   `-3 ^ 2` is 9, as in Excel, rather than -9 as in Python and mathematical

@@ -27,6 +27,7 @@ add_executable(fvqual_tests
     test_outletgroups.cpp
     test_transfers.cpp
     test_openboundaries.cpp
+    test_boundarytransport.cpp
     test_macdonald.cpp
     test_kinetics_numerics.cpp
     test_reactionnetwork.cpp

@@ -140,6 +140,20 @@ bool SourceSet::setDischarge(int index, double discharge, std::string &message)
     return true;
 }
 
+bool SourceSet::setPlacement(int index, Placement placement, std::string &message)
+{
+    if (index < 0 || index >= count())
+    {
+        message = "source index " + std::to_string(index) + " is out of range";
+        return false;
+    }
+
+    m_sources[static_cast<size_t>(index)].placement = placement;
+
+    message.clear();
+    return true;
+}
+
 void SourceSet::clear() noexcept
 {
     m_sources.clear();
@@ -652,7 +666,10 @@ void SourceSet::columnTotals(std::span<double> columnDischarge) const
     for (const Source &source : m_sources)
     {
         if (source.column < static_cast<int64_t>(columnDischarge.size()))
-            columnDischarge[static_cast<size_t>(source.column)] += source.discharge;
+            // Boundary water is already carried by the external mode's own
+            // boundary flux; reporting it here would move it twice.
+            if (!source.externallyAccounted)
+                columnDischarge[static_cast<size_t>(source.column)] += source.discharge;
     }
 }
 
@@ -707,7 +724,10 @@ void SourceSet::distribute(const Mesh::LayeredMesh &mesh, std::span<const double
                 source.discharge * share;
         }
 
-        columnDischarge[static_cast<size_t>(source.column)] += source.discharge;
+        // Boundary water is already carried by the external mode's own
+        // boundary flux; reporting it here would move it twice.
+        if (!source.externallyAccounted)
+            columnDischarge[static_cast<size_t>(source.column)] += source.discharge;
     }
 }
 

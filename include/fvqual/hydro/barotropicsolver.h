@@ -300,6 +300,18 @@ public:
     }
 
     /*!
+     * \brief Boundary index for each edge, or -1 for an interior or wall edge.
+     *
+     * Exposed so the internal mode can work out which column each open-boundary
+     * edge feeds, and with what composition, without duplicating the edge-to-
+     * boundary assignment made here.
+     */
+    [[nodiscard]] const std::vector<int> &edgeBoundary() const noexcept
+    {
+        return m_edgeBoundary;
+    }
+
+    /*!
      * \brief Callback that refreshes the column sources before each substep.
      *
      * \param surfaceElevation Current water-surface elevation per column (m).

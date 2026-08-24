@@ -135,6 +135,23 @@ struct FVQual_EXPORT Source
     double withdrawalAngle = 3.14159265358979323846;
 
     /*!
+     * \brief Whether the external mode has already accounted for this water.
+     *
+     * Normally false: a source is water arriving from outside the model, and the
+     * depth-averaged solver has to be told about it so the free surface
+     * responds.
+     *
+     * True for an open boundary, where the external mode moved the water itself
+     * through the boundary edge and the source exists only to give the
+     * three-dimensional transport a composition and a placement for it.
+     * Reporting such a source in the column total would add the same water
+     * twice — once as a boundary flux and once as a source — which shows up as
+     * a free surface that rises too fast and a mode-consistency residual that
+     * stops vanishing.
+     */
+    bool externallyAccounted = false;
+
+    /*!
      * \brief Inflow temperature (deg C), used both to set the incoming water's
      *        properties and to find its neutral-buoyancy depth. Ignored for
      *        withdrawals, which carry the ambient values by construction.
@@ -180,6 +197,20 @@ public:
      *        operating schedule is applied mid-run.
      */
     [[nodiscard]] bool setDischarge(int index, double discharge, std::string &message);
+
+    /*!
+     * \brief Changes where a source acts.
+     *
+     * Needed because an open boundary can reverse: the placement that is right
+     * for water arriving is not the one that is right for water leaving, and
+     * which is happening is only known after the external mode has run.
+     *
+     * \param[in]  index     Source index.
+     * \param[in]  placement New placement.
+     * \param[out] message   Failure description when returning false.
+     */
+    [[nodiscard]] bool setPlacement(int index, Placement placement,
+                                    std::string &message);
 
     /*!
      * \brief Clears every source.

@@ -405,6 +405,69 @@ public:
     }
 
     /*!
+     * \brief Binds the external mode's open boundaries into the 3-D transport.
+     *
+     * Call once, after the boundaries have been added through external(), and
+     * before stepping. Each (boundary, adjacent column) pair becomes a
+     * Forcing::Source whose discharge is refreshed from the external mode every
+     * step — so boundary water enters through the same placement, composition
+     * and conservation machinery a tributary inflow already uses.
+     *
+     * **Why a source and not an edge flux.** The external mode solves a
+     * depth-averaged problem, so all it knows about a boundary is the
+     * depth-integrated volume that crossed it. How that volume distributes over
+     * the water column is a modelling choice in either formulation, and a
+     * column source makes the choice explicit and selectable instead of burying
+     * it in a flux reconstruction. It also keeps the two modes consistent for
+     * free: the vertical velocity is diagnosed from continuity *including*
+     * sources, so the surface-flux residual that guards mode consistency
+     * remains valid with a boundary open.
+     *
+     * \param[in]  placement How inflow spreads over the column. DensityMatched
+     *                       by default, because a tributary entering a
+     *                       stratified reservoir plunges to its own density
+     *                       rather than mixing across the surface.
+     * \param[out] message   Failure description when returning false.
+     */
+    [[nodiscard]] bool bindOpenBoundaries(
+        Forcing::Placement placement, std::string &message);
+
+    //! As above, with the density-matched default.
+    [[nodiscard]] bool bindOpenBoundaries(std::string &message)
+    {
+        return bindOpenBoundaries(Forcing::Placement::DensityMatched, message);
+    }
+
+    /*!
+     * \brief Prescribes what an open boundary's inflow carries.
+     *
+     * Unset, a boundary carries **ambient** values: inflow arrives at the
+     * receiving column's own concentration, so an unconfigured open boundary is
+     * transparent to constituents rather than a source of distilled water. That
+     * is the neutral choice, not a silent one — but it is also not a tributary,
+     * and a model with a real inflow should say what is in it.
+     *
+     * \param[in]  boundary  Index returned by external().addBoundary().
+     * \param[in]  speciesId Constituent, or the reserved temperature id.
+     * \param[in]  value     Concentration, or temperature in deg C.
+     * \param[out] message   Failure description when returning false.
+     */
+    [[nodiscard]] bool setBoundaryValue(int boundary, const std::string &speciesId,
+                                        double value, std::string &message);
+
+    //! Returns an open boundary to carrying ambient values.
+    [[nodiscard]] bool clearBoundaryValue(int boundary, const std::string &speciesId,
+                                          std::string &message);
+
+    /*!
+     * \brief Volume that crossed \p boundary into the domain last step (m³).
+     *
+     * Negative for net export. Reported so a constituent budget can be closed
+     * against the boundary rather than assumed.
+     */
+    [[nodiscard]] double boundaryVolume(int boundary) const;
+
+    /*!
      * \brief Index of \p id in this solver's registry, or -1.
      *
      * Returns -1 before initialize(), so a caller that needs the registry can
@@ -456,6 +519,27 @@ private:
     void   diagnoseVerticalFlux(double dt);
     void   transportScalars(double dt);
     void   updateCellDepth();
+    void   refreshBoundarySources(double dt);
+    void   applyBoundaryComposition(int species);
+
+    /*!
+     * \brief One open-boundary edge group: a barotropic boundary meeting a
+     *        column, and the Forcing::Source that carries its water.
+     */
+    struct BoundaryLink
+    {
+        int                  boundary = -1; //!< Barotropic boundary index.
+        int64_t              column   = 0;  //!< Column it feeds.
+        int                  source   = -1; //!< Source index in m_sources.
+        Forcing::Placement   inflowPlacement = Forcing::Placement::Uniform;
+        std::vector<int64_t> edges;         //!< Edges of this pair.
+        double               volume   = 0.0; //!< Volume in last step (m³).
+    };
+
+    std::vector<BoundaryLink> m_boundaryLinks;
+
+    //! Prescribed inflow values, by (boundary, species); NaN means ambient.
+    std::vector<double> m_boundaryValue;
     void   applyHorizontalDiffusion(double dt, std::span<double> values);
     void   applySurfaceHeatFlux(double dt);
     double bottomDragCoefficient(int64_t column) const;
