@@ -405,6 +405,29 @@ public:
     }
 
     /*!
+     * \brief Index of \p id in this solver's registry, or -1.
+     *
+     * Returns -1 before initialize(), so a caller that needs the registry can
+     * check this first and never reach species() with nothing behind it.
+     */
+    [[nodiscard]] int speciesIndex(const std::string &id) const noexcept;
+
+    /*!
+     * \brief The species registry this solver was initialized with.
+     *
+     * Read-only, and deliberately so: the reaction network is bound through
+     * compileReactions() rather than by handing the registry to a caller, so
+     * that a network cannot be resolved against a different registry than the
+     * state was allocated with.
+     *
+     * \pre initialize() has succeeded.
+     */
+    [[nodiscard]] const State::SpeciesRegistry &species() const noexcept
+    {
+        return *m_species;
+    }
+
+    /*!
      * \brief Resolves the reaction network's names against this solver's species.
      *
      * Exists rather than exposing the registry so the network cannot be bound

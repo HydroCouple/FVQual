@@ -1079,6 +1079,14 @@ void InternalModeSolver::updateCellDepth()
     }
 }
 
+int InternalModeSolver::speciesIndex(const std::string &id) const noexcept
+{
+    if (m_species == nullptr)
+        return -1;
+
+    return m_species->indexOf(id);
+}
+
 bool InternalModeSolver::compileReactions(std::string &message)
 {
     if (m_species == nullptr)

@@ -461,6 +461,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   treating Surface as WaterColumn fails three gates, and a solver mask that
   marks the bed as the surface fails the wiring gate.
 
+### Added — Phase 6 (F6.4 tier 1, constituent templates)
+
+- `FVQual::Kinetics` templates: ready-made constituent models built on the
+  reaction network. `WaterAgeTemplate` and `FirstOrderDecayTemplate` first —
+  water age, decaying tracers, and conservative constituents.
+- **Builders, not a second engine.** Every template installs readable rate-law
+  strings through the same public API a user would call, so the result is
+  inspectable and editable afterwards and no template can express anything a
+  hand-written network could not.
+- **Parameters are per day, not per second.** Every reference a modeller
+  consults quotes rates per day, and SI in the struct invites a silent factor of
+  86400 — which produces output that looks entirely plausible. The conversion
+  happens inside the template and is gated: ablating it fails two tests.
+- Water age's surface condition is a **relaxation, not a reset**, and the
+  documentation says so rather than claiming zero. A hard assignment inside a
+  split operator would make the surface contribution depend on layer thickness
+  and hand the integrator a discontinuity every step. The relaxation carries an
+  explicit `__THICKNESS__` factor to cancel the areal division a Surface scope
+  applies — without it the reset strength would depend on the sigma grid, which
+  is what the layer-count gate checks.
+- A zero decay rate installs **no rate law at all**, so a conservative
+  constituent is carried by transport and never reaches the integrator.
+- `InternalModeSolver::speciesIndex()` and `species()` expose the registry
+  read-only, so templates can resolve names without being able to bind a network
+  against the wrong registry.
+
 ### Known limitations
 
 - The expression parser binds unary minus tighter than exponentiation, so
