@@ -57,6 +57,7 @@
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/barotropicsolver.h"
 #include "fvqual/hydro/pressureclosure.h"
+#include "fvqual/kinetics/reactionnetwork.h"
 #include "fvqual/forcing/sources.h"
 #include "fvqual/forcing/outletgroups.h"
 #include "fvqual/forcing/structures.h"
@@ -183,6 +184,7 @@ struct FVQual_EXPORT StepProfile
     int64_t geometry   = 0; //!< Surface update and mode reconciliation.
     int64_t fluxes     = 0; //!< Layer and vertical flux construction.
     int64_t transport  = 0; //!< Scalar advection, diffusion, heat flux.
+    int64_t reactions  = 0; //!< Operator-split kinetics.
     int64_t total      = 0; //!< The whole step.
 
     void reset() noexcept { *this = StepProfile{}; }
@@ -352,6 +354,29 @@ public:
     }
 
     /*!
+     * \brief Rate laws applied to the transported scalars each step.
+     *
+     * Configure the network here, then call compileReactions() before
+     * stepping. Empty by default, so hydrodynamics-only runs pay nothing.
+     */
+    [[nodiscard]] Kinetics::ReactionNetwork &reactions() noexcept { return m_reactions; }
+    [[nodiscard]] const Kinetics::ReactionNetwork &reactions() const noexcept
+    {
+        return m_reactions;
+    }
+
+    /*!
+     * \brief Resolves the reaction network's names against this solver's species.
+     *
+     * Exists rather than exposing the registry so the network cannot be bound
+     * against a *different* registry than the state was allocated with — the
+     * indices would resolve and the wrong species would react.
+     *
+     * \param[out] message Failure description when returning false.
+     */
+    [[nodiscard]] bool compileReactions(std::string &message);
+
+    /*!
      * \brief Recomputes cell density from the current scalars.
      */
     void updateDensity();
@@ -384,6 +409,7 @@ private:
     Forcing::StructureSet             m_structures;
     Forcing::OutletGroupSet           m_groups;
     Forcing::TransferSet              m_transfers;
+    Kinetics::ReactionNetwork         m_reactions;
     StepProfile                       m_profile;
     std::unique_ptr<IPressureClosure> m_pressure;
 

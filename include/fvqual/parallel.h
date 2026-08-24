@@ -27,7 +27,8 @@
 
 #include <omp.h>
 
-#define FVQual_PRAGMA(x) _Pragma(#x)
+// Variadic so a clause list containing commas survives macro expansion.
+#define FVQual_PRAGMA(...) _Pragma(#__VA_ARGS__)
 
 //! Parallel over an index range whose iterations touch disjoint memory.
 #define FVQual_PARALLEL_FOR FVQual_PRAGMA(omp parallel for schedule(static))
@@ -35,6 +36,16 @@
 //! As above, with one or more reduction items, e.g. `(+ : total, count)`.
 #define FVQual_PARALLEL_FOR_REDUCE(...)                                                  \
     FVQual_PRAGMA(omp parallel for schedule(static) reduction(__VA_ARGS__))
+
+/*!
+ * \brief As above with an arbitrary clause list, e.g. two reduction operators.
+ *
+ * One `reduction` clause carries one operator, so a loop reducing both a
+ * minimum and a couple of counters needs several clauses rather than a longer
+ * list inside one.
+ */
+#define FVQual_PARALLEL_FOR_CLAUSES(...)                                                 \
+    FVQual_PRAGMA(omp parallel for schedule(static) __VA_ARGS__)
 
 //! Guards a single scattered update. Rare by design; see BarotropicSolver.
 #define FVQual_ATOMIC FVQual_PRAGMA(omp atomic)
@@ -44,6 +55,7 @@
 
 #define FVQual_PARALLEL_FOR
 #define FVQual_PARALLEL_FOR_REDUCE(...)
+#define FVQual_PARALLEL_FOR_CLAUSES(...)
 #define FVQual_ATOMIC
 
 #endif

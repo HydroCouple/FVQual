@@ -316,6 +316,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   quietly wrong. `parse()` now rejects any postfix sequence that does not
   evaluate to exactly one value.
 
+### Added — Phase 6 (F6.1b, reaction network)
+
+- `FVQual::Kinetics::ReactionNetwork`: a rate law per species, written as an
+  expression over the other species and named constants, resolved once at
+  `compile()` and integrated per cell. The network is data, not code, so adding
+  a constituent does not mean recompiling the engine.
+- Temperature is not a special case: it is a transported species addressable by
+  its registry id, so Arrhenius dependence is something the modeller writes.
+- Wired into `InternalModeSolver::step()` as a Lie-split operator after
+  transport and before the density update, with a `StepProfile::reactions`
+  timer and `compileReactions()` binding the network to the solver's own
+  registry — passing a different registry would resolve to the wrong species.
+- A network with rate laws that has not been compiled refuses the step up
+  front, rather than failing partway through and leaving the state transported
+  but unreacted.
+- `ReactionDiagnostics` reports the smallest concentration reached, the cells
+  that went negative, and the cells the integrator could not converge.
+  Negatives are **not** clamped: a clamp restores plausibility while destroying
+  the mass balance, and hides the rate law that caused it.
+- Reaction conservation is deliberately not enforced. Transport conservation is
+  an engine identity; whether reactions conserve depends on whether the rate
+  laws sum to zero across species, which is the modeller's arithmetic. The
+  gates verify that a closed network conserves, that an open one is *allowed*
+  to lose mass, and that a zero-order sink crosses zero and says so.
+- Gates: first-order decay against its closed form both in isolation and
+  through the full solver; `A -> B -> C` checked against its analytical
+  solution and its invariant every step; and a linear decay in a stirred basin
+  against the bulk law `M(t) = M₀ exp(-kt)`, which holds under any flow field
+  and so tests that transport and reaction compose. Each was proved to have
+  teeth by ablation — removing the operator from the step, removing the
+  pre-step guard, removing the unresolved-name check, and sharing one
+  workspace slice across threads each break the gates that claim them.
+- Reaction workspace is re-sized if the host raises the thread count after
+  `compile()`; the previous sizing would have had threads writing past the end.
+
 ### Known limitations
 
 - The expression parser binds unary minus tighter than exponentiation, so

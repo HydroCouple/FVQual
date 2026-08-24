@@ -1037,6 +1037,17 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
     }
 }
 
+bool InternalModeSolver::compileReactions(std::string &message)
+{
+    if (m_species == nullptr)
+    {
+        message = "internal mode has not been initialized";
+        return false;
+    }
+
+    return m_reactions.compile(*m_species, message);
+}
+
 bool InternalModeSolver::step(double dt, std::string &message)
 {
     if (m_mesh == nullptr)
@@ -1048,6 +1059,16 @@ bool InternalModeSolver::step(double dt, std::string &message)
     if (!(dt > 0.0))
     {
         message = "internal time step must be positive";
+        return false;
+    }
+
+    // Checked here rather than at the point of use, so a misconfigured network
+    // refuses the step instead of failing halfway through one and leaving the
+    // state transported but unreacted.
+    if (!m_reactions.empty() && !m_reactions.compiled())
+    {
+        message = "reaction network has rate laws but has not been compiled; "
+                  "call compileReactions()";
         return false;
     }
 
@@ -1225,6 +1246,22 @@ bool InternalModeSolver::step(double dt, std::string &message)
         ScopedTimer timer(m_profile.transport);
         transportScalars(dt);
         applySurfaceHeatFlux(dt);
+    }
+
+    // 9. Reactions act on the transported field: first-order Lie splitting.
+    //
+    // After transport rather than before, and before the density update rather
+    // than after, so a reaction that changes temperature is reflected in the
+    // density the *next* step's pressure gradient is built from.
+    if (!m_reactions.empty())
+    {
+        ScopedTimer timer(m_profile.reactions);
+
+        if (!m_reactions.integrate(*m_species, *m_state, m_state->cellCount(), dt,
+                                   message))
+        {
+            return false;
+        }
     }
 
     updateDensity();
