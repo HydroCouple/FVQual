@@ -100,6 +100,35 @@ struct FVQual_EXPORT ReactionDiagnostics
 };
 
 /*!
+ * \brief Where in the column a rate law acts.
+ */
+enum class RateScope
+{
+    /*!
+     * \brief Everywhere in the water column, per unit volume.
+     *
+     * Units are concentration per second. The ordinary case: decay,
+     * nitrification, algal growth.
+     */
+    WaterColumn,
+
+    /*!
+     * \brief Only in the cell touching the bed, per unit **area**.
+     *
+     * Units are mass per unit area per second, and the engine divides by the
+     * bed cell's thickness to turn that into a concentration rate. Sediment
+     * oxygen demand is quoted as a flux — g/m²/d — because that is what it is:
+     * a property of the sediment surface, not of the water above it.
+     *
+     * Doing the division in the engine rather than asking the modeller to write
+     * `/ __THICKNESS__` is deliberate. Forgetting it produces a model where the
+     * benthic demand silently scales with the layer count, and the value looks
+     * plausible either way.
+     */
+    Bed
+};
+
+/*!
  * \brief A set of rate laws over the registered species.
  */
 class FVQual_EXPORT ReactionNetwork
@@ -140,6 +169,29 @@ public:
                                const std::string &expression, std::string &message);
 
     /*!
+     * \brief Registers `dC/dt` for one species over part of the column.
+     *
+     * A species may carry one law per scope, and where they overlap — a bed cell
+     * is also part of the water column — the rates **add** into a single
+     * derivative rather than being applied in sequence. That distinction
+     * matters: sequential application would introduce a splitting error between
+     * two terms of the same ODE, where none is needed.
+     *
+     * Two laws for the same species *and* scope are still refused. Summing them
+     * would be well defined, but writing the same law twice is far more often a
+     * mistake than an intent, and the sum is available by writing one
+     * expression.
+     *
+     * \param[in]  speciesId  Species the law applies to.
+     * \param[in]  expression Rate law; units depend on \p scope.
+     * \param[in]  scope      Where the law acts.
+     * \param[out] message    Failure description when returning false.
+     */
+    [[nodiscard]] bool addRate(const std::string &speciesId,
+                               const std::string &expression, RateScope scope,
+                               std::string &message);
+
+    /*!
      * \brief Resolves every expression's names against \p registry.
      *
      * Must be called before integrate(). Separating this from addRate() is
@@ -163,11 +215,14 @@ public:
      * \param[out]    message   Failure description when returning false.
      * \param[in]     fields    Engine-computed per-cell fields. Required only
      *                          for the ones the rate laws actually reference.
+     * \param[in]     bedCells  Non-zero for each cell touching the bed.
+     *                          Required only when a Bed-scope law exists.
      */
     [[nodiscard]] bool integrate(const State::SpeciesRegistry &registry,
                                  State::StateStore &state, int64_t cellCount, double dt,
                                  std::string &message,
-                                 const DerivedFields &fields = {});
+                                 const DerivedFields &fields = {},
+                                 std::span<const unsigned char> bedCells = {});
 
     /*!
      * \brief Whether any rate law references the irradiance field.
@@ -176,8 +231,17 @@ public:
      */
     [[nodiscard]] bool usesLight() const noexcept;
 
-    //! Number of species carrying a rate law.
+    //! Whether any rate law is Bed-scoped, and so needs the bed-cell mask.
+    [[nodiscard]] bool usesBedCells() const noexcept;
+
+    //! Number of species carrying at least one rate law.
     [[nodiscard]] int reactingCount() const noexcept
+    {
+        return static_cast<int>(m_reacting.size());
+    }
+
+    //! Number of rate laws, which may exceed reactingCount() across scopes.
+    [[nodiscard]] int rateCount() const noexcept
     {
         return static_cast<int>(m_rates.size());
     }
@@ -203,7 +267,13 @@ private:
         std::string text;       //!< The expression as written.
         Expression  expression; //!< Compiled form.
         int         species = -1; //!< Index in the registry, after compile().
+        int         slot    = -1; //!< Index into m_reacting, after compile().
+        RateScope   scope   = RateScope::WaterColumn;
     };
+
+    [[nodiscard]] bool addRateImpl(const std::string &speciesId,
+                                   const std::string &expression, RateScope scope,
+                                   std::string &message);
 
     //! The derived fields, in the order they occupy the variable table.
     enum Derived : int
@@ -217,6 +287,15 @@ private:
     std::vector<Rate>        m_rates;
     std::vector<std::string> m_constantNames;
     std::vector<double>      m_constantValues;
+
+    /*!
+     * \brief Registry indices of the species carrying at least one law.
+     *
+     * The integrated state vector is indexed by position in *this* list, not by
+     * rate law, so that a species with both a water-column and a bed law is
+     * integrated once with the two rates summed.
+     */
+    std::vector<int> m_reacting;
 
     //! Which derived fields the compiled rate laws actually reference.
     bool m_derivedUsed[DerivedCount] = {false, false, false};

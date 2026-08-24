@@ -45,6 +45,20 @@ bool ReactionNetwork::addConstant(const std::string &name, double value,
 bool ReactionNetwork::addRate(const std::string &speciesId,
                               const std::string &expression, std::string &message)
 {
+    return addRateImpl(speciesId, expression, RateScope::WaterColumn, message);
+}
+
+bool ReactionNetwork::addRate(const std::string &speciesId,
+                              const std::string &expression, RateScope scope,
+                              std::string &message)
+{
+    return addRateImpl(speciesId, expression, scope, message);
+}
+
+bool ReactionNetwork::addRateImpl(const std::string &speciesId,
+                                  const std::string &expression, RateScope scope,
+                                  std::string &message)
+{
     if (speciesId.empty())
     {
         message = "a rate law needs a species";
@@ -53,19 +67,23 @@ bool ReactionNetwork::addRate(const std::string &speciesId,
 
     for (const Rate &rate : m_rates)
     {
-        if (rate.id == speciesId)
+        if (rate.id == speciesId && rate.scope == scope)
         {
-            // Two laws for one species is ambiguous rather than additive: the
-            // modeller either meant to sum them into one expression or made a
-            // mistake, and guessing which would be worse than refusing.
-            message = "species '" + speciesId + "' already has a rate law";
+            // Two laws for one species *in the same scope* is ambiguous rather
+            // than additive: the modeller either meant to sum them into one
+            // expression or made a mistake, and guessing which would be worse
+            // than refusing. Different scopes are a different matter — they are
+            // distinct processes, and where they overlap their rates add.
+            message = "species '" + speciesId +
+                      "' already has a rate law in this scope";
             return false;
         }
     }
 
     Rate rate;
-    rate.id   = speciesId;
-    rate.text = expression;
+    rate.id    = speciesId;
+    rate.text  = expression;
+    rate.scope = scope;
 
     if (parse(expression, rate.expression) != 0 || !rate.expression.valid)
     {
@@ -138,6 +156,8 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
     for (bool &used : m_derivedUsed)
         used = false;
 
+    m_reacting.clear();
+
     for (Rate &rate : m_rates)
     {
         rate.species = registry.indexOf(rate.id);
@@ -148,6 +168,27 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
                       "', which is not registered";
             return false;
         }
+
+        // One slot per reacting species, shared by every scope's law for it, so
+        // the rates add into one derivative instead of being applied in turn.
+        const auto existing = std::find(m_reacting.begin(), m_reacting.end(),
+                                        rate.species);
+
+        if (existing == m_reacting.end())
+        {
+            rate.slot = static_cast<int>(m_reacting.size());
+            m_reacting.push_back(rate.species);
+        }
+        else
+        {
+            rate.slot = static_cast<int>(std::distance(m_reacting.begin(), existing));
+        }
+
+        // A bed law is areal, and the engine divides by thickness to make it a
+        // concentration rate — so the thickness field is needed whether or not
+        // the expression mentions it.
+        if (rate.scope == RateScope::Bed)
+            m_derivedUsed[DerivedThickness] = true;
 
         // Every name in the expression must resolve. An unbound name would
         // otherwise evaluate as zero, turning a typo into a rate law that runs
@@ -191,7 +232,7 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
     const size_t threads = static_cast<size_t>(maxThreads());
 
     m_values.assign(static_cast<size_t>(variables) * threads, 0.0);
-    m_y.assign(m_rates.size() * threads, 0.0);
+    m_y.assign(m_reacting.size() * threads, 0.0);
 
     m_compiled = true;
 
@@ -204,9 +245,21 @@ bool ReactionNetwork::usesLight() const noexcept
     return m_derivedUsed[DerivedLight];
 }
 
+bool ReactionNetwork::usesBedCells() const noexcept
+{
+    for (const Rate &rate : m_rates)
+    {
+        if (rate.scope == RateScope::Bed)
+            return true;
+    }
+
+    return false;
+}
+
 bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
                                 State::StateStore &state, int64_t cellCount, double dt,
-                                std::string &message, const DerivedFields &fields)
+                                std::string &message, const DerivedFields &fields,
+                                std::span<const unsigned char> bedCells)
 {
     if (m_rates.empty())
     {
@@ -229,7 +282,18 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
 
     const int species   = registry.count();
     const int variables = static_cast<int>(m_variableTable.size());
-    const int reacting  = static_cast<int>(m_rates.size());
+    const int reacting  = static_cast<int>(m_reacting.size());
+    const int laws      = static_cast<int>(m_rates.size());
+
+    const bool benthic = usesBedCells();
+
+    if (benthic && static_cast<int64_t>(bedCells.size()) < cellCount)
+    {
+        message = "a rate law is bed-scoped but the bed-cell mask covers " +
+                  std::to_string(bedCells.size()) + " of " +
+                  std::to_string(cellCount) + " cells";
+        return false;
+    }
 
     // A referenced field that was not supplied is refused here. Ablating this
     // check does not produce a quiet zero as I first assumed — it segfaults,
@@ -271,8 +335,8 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
     if (m_values.size() < static_cast<size_t>(variables) * threads)
         m_values.assign(static_cast<size_t>(variables) * threads, 0.0);
 
-    if (m_y.size() < m_rates.size() * threads)
-        m_y.assign(m_rates.size() * threads, 0.0);
+    if (m_y.size() < m_reacting.size() * threads)
+        m_y.assign(m_reacting.size() * threads, 0.0);
 
     double  minimum    = std::numeric_limits<double>::max();
     int64_t negatives  = 0;
@@ -307,19 +371,50 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
         }
 
         for (int r = 0; r < reacting; ++r)
-            y[r] = state.speciesAt(m_rates[static_cast<size_t>(r)].species, cell);
+            y[r] = state.speciesAt(m_reacting[static_cast<size_t>(r)], cell);
+
+        const bool atBed = !bedCells.empty() && bedCells[static_cast<size_t>(cell)] != 0;
+
+        // An areal bed rate becomes a concentration rate over the bed cell's
+        // own thickness, so the same law delivers the same mass flux however
+        // the column is layered.
+        //
+        // Computed for every cell, not only benthic ones, even though only
+        // benthic ones use it. An earlier version zeroed it away from the bed,
+        // which made it a *second* mechanism enforcing scope — and an ablation
+        // showed that removing the scope check below then changed nothing, so
+        // nothing was testing it. One mechanism, and it is the check.
+        const double perThickness =
+            benthic ? 1.0 / derived[DerivedThickness][static_cast<size_t>(cell)] : 0.0;
 
         // The reacting species are refreshed from the integrator's state on
         // every derivative evaluation; the rest stay frozen through the
         // sub-step, which is what makes this a split operator rather than a
         // second transport.
+        //
+        // Rates *accumulate* per species. A species with both a water-column and
+        // a bed law gets their sum in one derivative — applying them one after
+        // the other would split two terms of the same ODE, which is a
+        // discretization error introduced for no reason.
         const auto derivatives = [&](double, const double *current, double *rates) {
             for (int r = 0; r < reacting; ++r)
-                values[m_rates[static_cast<size_t>(r)].species] = current[r];
+                values[m_reacting[static_cast<size_t>(r)]] = current[r];
 
             for (int r = 0; r < reacting; ++r)
-                rates[r] = evaluate_fast(m_rates[static_cast<size_t>(r)].expression,
-                                         values);
+                rates[r] = 0.0;
+
+            for (int l = 0; l < laws; ++l)
+            {
+                const Rate &law = m_rates[static_cast<size_t>(l)];
+
+                if (law.scope == RateScope::Bed && !atBed)
+                    continue;
+
+                const double value = evaluate_fast(law.expression, values);
+
+                rates[law.slot] +=
+                    law.scope == RateScope::Bed ? value * perThickness : value;
+            }
         };
 
         // The first trial step is the whole interval; the adaptive controller
@@ -336,7 +431,7 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
 
         for (int r = 0; r < reacting; ++r)
         {
-            state.speciesAt(m_rates[static_cast<size_t>(r)].species, cell) = y[r];
+            state.speciesAt(m_reacting[static_cast<size_t>(r)], cell) = y[r];
 
             minimum = std::min(minimum, y[r]);
 

@@ -184,6 +184,10 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_kz.assign(interfaces, options.backgroundDiffusivity);
     m_cellDepth.assign(cells, 0.0);
 
+    m_bedCell.assign(cells, 0);
+    for (int64_t c = 0; c < mesh.columnCount(); ++c)
+        m_bedCell[static_cast<size_t>(mesh.cell(c, mesh.layerCount() - 1))] = 1;
+
     // Sized unconditionally, even though the march itself only runs when a rate
     // law asks for irradiance. The alternative is allocating it when the network
     // is compiled, which puts an ordering trap in the API: the natural thing is
@@ -1303,7 +1307,7 @@ bool InternalModeSolver::step(double dt, std::string &message)
         fields.thickness = mesh.thickness();
 
         if (!m_reactions.integrate(*m_species, *m_state, m_state->cellCount(), dt,
-                                   message, fields))
+                                   message, fields, m_bedCell))
         {
             return false;
         }

@@ -385,7 +385,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that multiplication's commutativity would have let pass with the two fields
   swapped.
 
+### Added — Phase 6 (F6.2b, reaction scope)
+
+- `RateScope { WaterColumn, Bed }`. A benthic rate law applies only in the cell
+  touching the bed, and is written per unit **area** — g/m²/s, which is how a
+  sediment oxygen demand is actually quoted, because it is a property of the
+  sediment surface and not of the water above it. The engine divides by the bed
+  cell's thickness. Asking the modeller to write `/ __THICKNESS__` instead would
+  make the benthic demand silently proportional to the layer count, and it looks
+  plausible either way.
+- The duplicate-law key is now (species, scope) rather than species, which
+  revisits the F6.1b refusal deliberately: a water-column law and a bed law are
+  distinct processes, not an ambiguity. Two laws in the *same* scope are still
+  refused.
+- Where the two overlap — a bed cell is part of the water column too — the rates
+  **add into one derivative** rather than being applied in sequence. Sequential
+  application would introduce a splitting error between two terms of the same
+  ODE, for nothing. The integrated state vector is therefore indexed by species
+  rather than by rate law.
+- The solver supplies the bed-cell mask, so the network never needs to know the
+  mesh's indexing convention.
+- **A duplicate mechanism found and removed.** The areal conversion factor was
+  zeroed away from the bed, which enforced scope a second time; ablating the
+  scope check itself then changed no result, so nothing was testing it. The
+  factor is now computed unconditionally and the check is the only mechanism —
+  ablating it fails four gates.
+- Gates: a bed law touches only the benthic cell; an areal flux removes the same
+  mass per unit area at 4, 8 and 16 layers (the layer-count invariance a missing
+  thickness division breaks); water-column and bed laws sum against the closed
+  form of `dC/dt = -kC - F/h`; and the solver puts the flux at the *deepest*
+  cell, checked against depth rather than a layer index so a mask marking the
+  surface fails.
+
 ### Known limitations
+
+- `RateScope` has no `Surface` member yet, so surface-specific processes —
+  reaeration above all — cannot be expressed. The DO suite in F6.4 will need it.
 
 - The expression parser binds unary minus tighter than exponentiation, so
   `-3 ^ 2` is 9, as in Excel, rather than -9 as in Python and mathematical
