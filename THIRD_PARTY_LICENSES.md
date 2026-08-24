@@ -37,6 +37,19 @@ HydroCouple tree) ship without license headers in their source files.
 > release remains the provenance basis should any file become substantially
 > derived from W2 code.
 
+## doxygen-awesome-css
+
+Vendored under `docs/custom/` and used to theme the generated API
+documentation. **MIT License**, Copyright (c) 2021–2023 jothepro.
+
+- Upstream: <https://github.com/jothepro/doxygen-awesome-css>
+
+The files are copied verbatim, with only the vendored `header.html` retargeted
+from the theme's own branding to this project's. The full licence text is
+retained in the header of `docs/custom/css/doxygen-awesome.css`. The same theme
+and Doxygen release are used by HydroCoupleSDK and the HydroCouple interface
+definitions, so the three documentation sets render identically.
+
 ## HydroCoupleSDK / HydroCouple
 
 MIT License, Copyright (c) 2014-2026 Caleb Buahin. Consumed as a build

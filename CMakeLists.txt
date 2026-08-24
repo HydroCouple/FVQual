@@ -63,6 +63,7 @@ option(FVQual_BUILD_VERIFICATION
        "Build fvqual-verify, which regenerates the animated verification page" ON)
 option(FVQual_USE_NETCDF   "Enable NetCDF-4 UGRID input/output"     OFF)
 option(FVQual_USE_OPENMP   "Enable OpenMP threading"                OFF)
+option(FVQual_BUILD_DOCS   "Build Doxygen documentation"             OFF)
 
 # ── HydroCoupleSDK (required) ─────────────────────────────────────────────
 #
@@ -141,6 +142,11 @@ endif()
 if(FVQual_BUILD_VERIFICATION)
     add_subdirectory(verification)
 add_subdirectory(benchmarks)
+
+if(FVQual_BUILD_DOCS)
+    find_package(Doxygen REQUIRED)
+    add_subdirectory(docs)
+endif()
 endif()
 
 # ── Install / export ──────────────────────────────────────────────────────

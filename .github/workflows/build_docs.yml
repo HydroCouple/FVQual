@@ -1,0 +1,142 @@
+name: Documentation
+
+# Builds the Doxygen API documentation and deploys it to GitHub Pages,
+# mirroring the HydroCoupleSDK and HydroCouple interface pipelines: the same
+# doxygen-awesome theme and the same pinned Doxygen release, so the three sets
+# of documentation look and behave alike.
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*.*.*" ]
+    paths:
+      - 'docs/**'
+      - 'include/**'
+      - 'src/**'
+      - '**/*.md'
+      - '.github/workflows/build_docs.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'docs/**'
+      - 'include/**'
+      - 'src/**'
+      - '**/*.md'
+      - '.github/workflows/build_docs.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build_doxygen_docs:
+    name: Build C++ Docs (Doxygen)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout FVQual
+        uses: actions/checkout@v4
+
+      - name: Checkout HydroCouple interface headers
+        uses: actions/checkout@v4
+        with:
+          repository: HydroCouple/HydroCouple
+          ref: dev
+          path: HydroCouple
+
+      - name: Checkout HydroCoupleSDK
+        uses: actions/checkout@v4
+        with:
+          repository: HydroCouple/HydroCoupleSDK
+          ref: dev
+          path: HydroCoupleSDK
+
+      - name: Install Graphviz
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz wget tar
+
+      - name: Install Doxygen 1.13.2
+        # Pinned to the same release as the SDK and interface pipelines, so a
+        # Doxygen upgrade cannot change three projects' output independently.
+        run: |
+          wget -q https://github.com/doxygen/doxygen/releases/download/Release_1_13_2/doxygen-1.13.2.linux.bin.tar.gz
+          tar -xzf doxygen-1.13.2.linux.bin.tar.gz
+          sudo cp doxygen-1.13.2/bin/doxygen /usr/local/bin/
+          doxygen --version
+
+      - name: Configure (docs only)
+        # Documentation is generated from the headers, so the heavy optional
+        # dependencies are switched off: nothing here needs to link.
+        run: >
+          cmake -S . -B build
+          -DFVQual_BUILD_DOCS=ON
+          -DFVQual_BUILD_TESTS=OFF
+          -DFVQual_BUILD_APPS=OFF
+          -DFVQual_BUILD_VERIFICATION=OFF
+          -DFVQual_USE_NETCDF=OFF
+          -DFVQual_USE_OPENMP=OFF
+          -DFVQual_SDK_SOURCE_DIR=${{ github.workspace }}/HydroCoupleSDK
+          -DHYDROCOUPLE_INCLUDE_DIR=${{ github.workspace }}/HydroCouple/include
+
+      - name: Build Doxygen docs
+        run: cmake --build build --target docs
+
+      - name: Report Doxygen warnings
+        # Reported, not gated. Undocumented public API is a defect worth
+        # driving to zero, but a gate that is switched off with
+        # continue-on-error is decoration: it looks like a check and enforces
+        # nothing. Turn the `exit 1` on once the count is zero, and it becomes
+        # a real gate that stays that way.
+        if: always()
+        run: |
+          LOG=build/docs/doxygen_warnings.log
+          if [ -s "$LOG" ]; then
+            echo "::warning::Doxygen emitted $(wc -l < "$LOG") warning line(s)"
+            cat "$LOG"
+          else
+            echo "No Doxygen warnings."
+          fi
+
+      - name: Upload Doxygen docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doxygen-docs
+          path: build/docs/doxygen/html/
+          retention-days: 1
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build_doxygen_docs
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Doxygen docs
+        uses: actions/download-artifact@v4
+        with:
+          name: doxygen-docs
+          path: site/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

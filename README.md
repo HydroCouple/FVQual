@@ -1,5 +1,14 @@
 # FVQual
 
+[![Build and Test](https://github.com/hydrocouple/FVQual/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/hydrocouple/FVQual/actions/workflows/build_and_test.yml)
+[![Documentation](https://github.com/hydrocouple/FVQual/actions/workflows/build_docs.yml/badge.svg)](https://github.com/hydrocouple/FVQual/actions/workflows/build_docs.yml)
+[![API docs](https://img.shields.io/badge/API%20docs-Doxygen-blue)](https://hydrocouple.github.io/FVQual/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=c%2B%2B&logoColor=white)](https://en.cppreference.com/w/cpp/20)
+[![CMake](https://img.shields.io/badge/build-CMake%203.21%2B-064F8C.svg?logo=cmake&logoColor=white)](CMakeLists.txt)
+[![C API](https://img.shields.io/badge/C%20API-C89--clean-555555.svg)](include/fvqual/capi/)
+[![Python bindings](https://img.shields.io/badge/Python%20bindings-planned-lightgrey.svg)](python/)
+
 **A fully 3D, unstructured, finite-volume hydrodynamic and water-quality model —
 the HydroCouple-native successor to CE-QUAL-W2.**
 
@@ -124,6 +133,23 @@ OpenSWMM's MSX engine), Phase 7 (Kokkos), Phase 8 (HydroCouple component and
 the CE-QUAL-W2 validation release).
 Verification gates and known limitations are recorded in
 [`CHANGELOG.md`](CHANGELOG.md).
+
+## Related projects
+
+FVQual is part of the HydroCouple family and follows the same build, testing,
+and documentation conventions as its siblings:
+
+- **[HydroCouple](https://github.com/HydroCouple/HydroCouple)** — the
+  component-based modeling interface definitions FVQual targets
+  ([API docs](https://hydrocouple.github.io/HydroCouple/)).
+- **[HydroCoupleSDK](https://github.com/HydroCouple/HydroCoupleSDK)** — the SDK
+  FVQual builds on for the data plane, component lifecycle, and mesh IO
+  ([API docs](https://hydrocouple.github.io/HydroCoupleSDK/)).
+- **[openswmm.engine](https://github.com/HydroCouple/openswmm.engine)** — the
+  SWMM engine whose C-API-plus-Cython binding structure the FVQual Python
+  bindings follow, and whose multispecies reaction engine FVQual will reuse for
+  water-quality kinetics
+  ([Python docs](https://hydrocouple.github.io/openswmm.engine/)).
 
 ## License
 

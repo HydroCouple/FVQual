@@ -28,6 +28,8 @@ tests/output/**
 # Documentation build
 docs/html/
 docs/latex/
+docs/doxygen/
+python/docs/_build/
 
 # Planning documents — kept locally, not published
 plans/
