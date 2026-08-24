@@ -1,0 +1,44 @@
+{
+    "name": "fvqual",
+    "description": "FVQual — 3D unstructured finite-volume hydrodynamic and water-quality model (HydroCouple-native CE-QUAL-W2 successor).",
+    "license": "MIT",
+    "homepage": "https://hydrocouple.org/projects/fvqual",
+    "version-semver": "0.1.0-alpha.1",
+    "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d",
+    "dependencies": [
+        {
+            "name": "vcpkg-cmake",
+            "host": true
+        },
+        {
+            "name": "vcpkg-cmake-config",
+            "host": true
+        }
+    ],
+    "default-features": [],
+    "features": {
+        "tests": {
+            "description": "Unit and verification test suite (Google Test)",
+            "dependencies": [
+                "gtest"
+            ]
+        },
+        "netcdf": {
+            "description": "NetCDF-4 UGRID mesh input and layered results output",
+            "dependencies": [
+                {
+                    "name": "netcdf-c",
+                    "features": [
+                        "hdf5"
+                    ]
+                }
+            ]
+        }
+    },
+    "overrides": [
+        {
+            "name": "gtest",
+            "version": "1.15.2"
+        }
+    ]
+}

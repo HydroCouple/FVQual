@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Caleb Buahin
+//
+// Generated from cmake/version.h.in — do not edit.
+
+#ifndef FVQual_VERSION_H
+#define FVQual_VERSION_H
+
+#define FVQual_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define FVQual_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define FVQual_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define FVQual_VERSION       "@PROJECT_VERSION@"
+#define FVQual_FULL_VERSION  "@FVQual_FULL_VERSION@"
+
+#endif // FVQual_VERSION_H

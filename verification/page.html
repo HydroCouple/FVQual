@@ -1,0 +1,425 @@
+<title>FVQual Verification</title>
+<style>
+  :root {
+    --bg: #f7f7f4;
+    --panel: #ffffff;
+    --ink: #1a1a17;
+    --muted: #6b6b63;
+    --line: #e0e0d8;
+    --accent: #1d4ed8;
+    --analytic: #b45309;
+    --compare: #9ca3af;
+    --good: #15803d;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.04);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg: #14151a;
+      --panel: #1c1e24;
+      --ink: #e8e8e3;
+      --muted: #9a9a92;
+      --line: #2c2f38;
+      --accent: #7aa2ff;
+      --analytic: #f0a340;
+      --compare: #6b7280;
+      --good: #4ade80;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14151a; --panel: #1c1e24; --ink: #e8e8e3; --muted: #9a9a92;
+    --line: #2c2f38; --accent: #7aa2ff; --analytic: #f0a340; --compare: #6b7280;
+    --good: #4ade80; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header { margin-bottom: 36px; }
+  h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; margin: 0 0 10px; letter-spacing: -.02em; }
+  .lede { color: var(--muted); max-width: 68ch; margin: 0 0 18px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-size: 12.5px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    white-space: nowrap;
+  }
+  .chip strong { color: var(--ink); font-weight: 600; }
+
+  nav.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 28px 0 20px; }
+  nav.tabs button {
+    font: inherit; font-size: 14px; padding: 8px 14px; cursor: pointer;
+    background: transparent; color: var(--muted);
+    border: 1px solid transparent; border-radius: 8px;
+  }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button[aria-selected="true"] {
+    background: var(--panel); color: var(--ink);
+    border-color: var(--line); box-shadow: var(--shadow);
+  }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; box-shadow: var(--shadow); padding: 24px;
+  }
+  h2 { font-size: 22px; margin: 0 0 4px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 14.5px; margin: 0 0 18px; }
+
+  .plot { width: 100%; overflow-x: auto; }
+  svg { display: block; width: 100%; height: auto; }
+  .axis line, .axis path { stroke: var(--line); }
+  .axis text { fill: var(--muted); font-size: 11px; }
+  .gridline { stroke: var(--line); stroke-dasharray: 2 4; opacity: .7; }
+
+  .controls { display: flex; align-items: center; gap: 14px; margin: 16px 0 6px; flex-wrap: wrap; }
+  .controls button {
+    font: inherit; font-size: 14px; padding: 7px 16px; cursor: pointer;
+    border-radius: 8px; border: 1px solid var(--line);
+    background: var(--accent); color: #fff; border-color: transparent; min-width: 84px;
+  }
+  .controls button.ghost { background: transparent; color: var(--ink); border-color: var(--line); min-width: 0; }
+  input[type=range] { flex: 1; min-width: 180px; accent-color: var(--accent); }
+  .clock { font-variant-numeric: tabular-nums; font-size: 13.5px; color: var(--muted); min-width: 116px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  .readout { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  .stat {
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+    min-width: 132px; background: transparent;
+  }
+  .stat .k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .stat .v { font-size: 19px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+  .notes { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .notes p { margin: 0 0 12px; max-width: 74ch; }
+  .verdict {
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 14.5px; color: var(--ink);
+    background: color-mix(in srgb, var(--good) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--good) 30%, transparent);
+    border-radius: 10px; padding: 12px 14px; max-width: 74ch;
+  }
+  .verdict .tick { color: var(--good); font-weight: 700; line-height: 1.4; }
+
+  footer { margin-top: 42px; color: var(--muted); font-size: 13.5px; max-width: 74ch; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em;
+         background: color-mix(in srgb, var(--ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>FVQual verification</h1>
+    <p class="lede">
+      Six benchmarks with closed-form or theoretical solutions, animated against the
+      model. A converged error norm tells you how much a scheme is wrong; watching a
+      front arrive late tells you why.
+    </p>
+    <div class="meta">
+      <span class="chip"><strong>76</strong> tests passing</span>
+      <span class="chip">Phases <strong>0–3</strong> + <strong>F5.1</strong></span>
+      <span class="chip">3D hydrostatic · tri-quad · sigma</span>
+      <span class="chip">MUSCL + Zalesak FCT</span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+
+  <section class="card">
+    <h2 id="title"></h2>
+    <p class="sub" id="subtitle"></p>
+
+    <div class="plot"><svg id="chart" viewBox="0 0 900 400" preserveAspectRatio="xMidYMid meet"></svg></div>
+
+    <div class="controls">
+      <button id="play">Pause</button>
+      <input type="range" id="scrub" min="0" max="100" value="0" aria-label="time">
+      <span class="clock" id="clock"></span>
+      <button class="ghost" id="restart">Restart</button>
+    </div>
+
+    <div class="legend" id="legend"></div>
+    <div class="readout" id="readout"></div>
+
+    <div class="plot" id="traceWrap" hidden>
+      <svg id="trace" viewBox="0 0 900 170" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+
+    <div class="notes">
+      <p id="commentary"></p>
+      <div class="verdict"><span class="tick">✓</span><span id="verdict"></span></div>
+    </div>
+  </section>
+
+  <footer>
+    Generated by <code>fvqual-verify</code> from the solver itself — every curve is a
+    real run at the solver's own adaptive time step, decimated to animation frames.
+    Rebuild with <code>cmake --build build --target fvqual-verify</code>.
+  </footer>
+</div>
+
+<script id="payload" type="application/json">__DATA__</script>
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById('payload').textContent);
+  const scenarios = data.scenarios;
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const chart = document.getElementById('chart');
+  const trace = document.getElementById('trace');
+  const tabs = document.getElementById('tabs');
+
+  let active = 0, frame = 0, playing = true, timer = null;
+
+  const el = (name, attrs) => {
+    const node = document.createElementNS(NS, name);
+    for (const k in attrs) node.setAttribute(k, attrs[k]);
+    return node;
+  };
+
+  const extent = (scene) => {
+    let lo = Infinity, hi = -Infinity;
+    const series = [scene.model, scene.analytic, scene.comparison];
+    for (const s of series)
+      for (const f of (s || []))
+        for (const v of f) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    const pad = (hi - lo) * 0.10 || 0.5;
+    return [lo - pad, hi + pad];
+  };
+
+  const fmt = (v) => {
+    const a = Math.abs(v);
+    if (a === 0) return '0';
+    if (a < 0.001 || a >= 1e5) return v.toExponential(1);
+    if (a < 1) return v.toFixed(3);
+    if (a < 100) return v.toFixed(2);
+    return v.toFixed(0);
+  };
+
+  const clock = (s) => s >= 3600 ? (s / 3600).toFixed(2) + ' h'
+                     : s >= 120 ? (s / 60).toFixed(1) + ' min'
+                     : s.toFixed(1) + ' s';
+
+  function drawChart(scene, index) {
+    chart.textContent = '';
+    const W = 900, H = 400, m = { t: 16, r: 18, b: 44, l: 62 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+    const xs = scene.x, x0 = xs[0], x1 = xs[xs.length - 1];
+    const [y0, y1] = scene.yRange;
+    const X = v => m.l + (v - x0) / (x1 - x0) * iw;
+    const Y = v => m.t + (1 - (v - y0) / (y1 - y0)) * ih;
+
+    const g = el('g', {});
+    chart.appendChild(g);
+
+    for (let i = 0; i <= 4; i++) {
+      const v = y0 + (y1 - y0) * i / 4;
+      g.appendChild(el('line', { class: 'gridline', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }));
+      const t = el('text', { class: 'axis', x: m.l - 10, y: Y(v) + 4, 'text-anchor': 'end' });
+      t.textContent = fmt(v); g.appendChild(t);
+    }
+    for (let i = 0; i <= 5; i++) {
+      const v = x0 + (x1 - x0) * i / 5;
+      const t = el('text', { class: 'axis', x: X(v), y: H - m.b + 22, 'text-anchor': 'middle' });
+      t.textContent = fmt(v); g.appendChild(t);
+    }
+    g.appendChild(el('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+    g.appendChild(el('line', { class: 'axis', x1: m.l, x2: m.l, y1: m.t, y2: H - m.b }));
+
+    const xLab = el('text', { class: 'axis', x: m.l + iw / 2, y: H - 6, 'text-anchor': 'middle' });
+    xLab.textContent = scene.xLabel; g.appendChild(xLab);
+    const yLab = el('text', { class: 'axis', x: 14, y: m.t + ih / 2,
+      'text-anchor': 'middle', transform: `rotate(-90 14 ${m.t + ih / 2})` });
+    yLab.textContent = scene.yLabel; g.appendChild(yLab);
+
+    const path = (vals) => {
+      let d = '';
+      for (let i = 0; i < vals.length; i++)
+        d += (i ? 'L' : 'M') + X(xs[i]).toFixed(2) + ' ' + Y(vals[i]).toFixed(2) + ' ';
+      return d;
+    };
+
+    if (scene.comparison && scene.comparison.length)
+      g.appendChild(el('path', { d: path(scene.comparison[index]), fill: 'none',
+        stroke: 'var(--compare)', 'stroke-width': 1.8 }));
+
+    if (scene.analytic && scene.analytic.length)
+      g.appendChild(el('path', { d: path(scene.analytic[index]), fill: 'none',
+        stroke: 'var(--analytic)', 'stroke-width': 2, 'stroke-dasharray': '6 4' }));
+
+    g.appendChild(el('path', { d: path(scene.model[index]), fill: 'none',
+      stroke: 'var(--accent)', 'stroke-width': 2.4, 'stroke-linejoin': 'round' }));
+  }
+
+  function drawTrace(scene, index) {
+    const wrap = document.getElementById('traceWrap');
+    if (!scene.trace || !scene.trace.length) { wrap.hidden = true; return; }
+    wrap.hidden = false;
+    trace.textContent = '';
+
+    const W = 900, H = 170, m = { t: 14, r: 18, b: 30, l: 62 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const ts = scene.times;
+    const all = scene.trace.concat(scene.traceReference || []);
+    let lo = Math.min(...all), hi = Math.max(...all);
+    const pad = (hi - lo) * 0.15 || 0.5; lo -= pad; hi += pad;
+
+    const X = v => m.l + (v - ts[0]) / (ts[ts.length - 1] - ts[0]) * iw;
+    const Y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+
+    const g = el('g', {}); trace.appendChild(g);
+    g.appendChild(el('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+
+    for (let i = 0; i <= 2; i++) {
+      const v = lo + (hi - lo) * i / 2;
+      g.appendChild(el('line', { class: 'gridline', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }));
+      const t = el('text', { class: 'axis', x: m.l - 10, y: Y(v) + 4, 'text-anchor': 'end' });
+      t.textContent = fmt(v); g.appendChild(t);
+    }
+
+    const line = (vals) => {
+      let d = '';
+      for (let i = 0; i < vals.length; i++)
+        d += (i ? 'L' : 'M') + X(ts[i]).toFixed(2) + ' ' + Y(vals[i]).toFixed(2) + ' ';
+      return d;
+    };
+
+    if (scene.traceReference && scene.traceReference.length)
+      g.appendChild(el('path', { d: line(scene.traceReference), fill: 'none',
+        stroke: 'var(--analytic)', 'stroke-width': 1.8, 'stroke-dasharray': '6 4' }));
+    g.appendChild(el('path', { d: line(scene.trace), fill: 'none',
+      stroke: 'var(--accent)', 'stroke-width': 2 }));
+
+    g.appendChild(el('line', { x1: X(ts[index]), x2: X(ts[index]), y1: m.t, y2: H - m.b,
+      stroke: 'var(--ink)', 'stroke-width': 1, opacity: .35 }));
+
+    const lab = el('text', { class: 'axis', x: m.l, y: 11 });
+    lab.textContent = scene.traceLabel; g.appendChild(lab);
+  }
+
+  function readout(scene, index) {
+    const model = scene.model[index];
+
+    // Some scenes have no closed form to compare against — the radiating
+    // boundary is a comparison between two model runs, not against theory.
+    // Reporting the spread between the two series is the number that means
+    // something there; inventing an "error" against nothing would not.
+    const hasExact = scene.analytic && scene.analytic.length;
+    const other = hasExact ? scene.analytic[index]
+                : (scene.comparison && scene.comparison.length ? scene.comparison[index]
+                                                               : null);
+
+    let l1 = 0, peak = 0;
+    if (other) {
+      for (let i = 0; i < model.length; i++) {
+        const d = Math.abs(model[i] - other[i]);
+        l1 += d; if (d > peak) peak = d;
+      }
+      l1 /= model.length;
+    }
+
+    const box = document.getElementById('readout');
+    box.textContent = '';
+
+    const add = (k, v) => {
+      const d = document.createElement('div'); d.className = 'stat';
+      const a = document.createElement('div'); a.className = 'k'; a.textContent = k;
+      const b = document.createElement('div'); b.className = 'v'; b.textContent = v;
+      d.appendChild(a); d.appendChild(b); box.appendChild(d);
+    };
+
+    if (other) {
+      add(hasExact ? 'mean |error|' : 'mean |difference|', fmt(l1));
+      add(hasExact ? 'peak |error|' : 'peak |difference|', fmt(peak));
+    }
+
+    if (scene.trace && scene.trace.length && scene.traceReference && scene.traceReference.length) {
+      const m = scene.trace[index], r = scene.traceReference[index];
+      const what = scene.id === 'lock-exchange' ? 'front' : 'tracked';
+      add(what + ', model', fmt(m));
+      add(what + ', theory', fmt(r));
+    }
+  }
+
+  function legend(scene) {
+    const box = document.getElementById('legend');
+    box.textContent = '';
+    const add = (label, colour, dashed) => {
+      const s = document.createElement('span');
+      const sw = document.createElement('i'); sw.className = 'swatch';
+      sw.style.background = dashed
+        ? `repeating-linear-gradient(90deg, ${colour} 0 6px, transparent 6px 10px)`
+        : colour;
+      s.appendChild(sw);
+      s.appendChild(document.createTextNode(label));
+      box.appendChild(s);
+    };
+    if (scene.modelLabel) add(scene.modelLabel, 'var(--accent)', false);
+    if (scene.analyticLabel) add(scene.analyticLabel, 'var(--analytic)', true);
+    if (scene.comparisonLabel) add(scene.comparisonLabel, 'var(--compare)', false);
+  }
+
+  function render() {
+    const scene = scenarios[active];
+    drawChart(scene, frame);
+    drawTrace(scene, frame);
+    readout(scene, frame);
+    document.getElementById('clock').textContent =
+      't = ' + clock(scene.times[frame]);
+    document.getElementById('scrub').value = frame;
+  }
+
+  function select(index) {
+    active = index; frame = 0;
+    const scene = scenarios[index];
+    if (!scene.yRange) scene.yRange = extent(scene);
+
+    document.getElementById('title').textContent = scene.title;
+    document.getElementById('subtitle').textContent = scene.subtitle;
+    document.getElementById('commentary').textContent = scene.commentary;
+    document.getElementById('verdict').textContent = scene.verdict;
+    document.getElementById('scrub').max = scene.times.length - 1;
+
+    [...tabs.children].forEach((b, i) =>
+      b.setAttribute('aria-selected', i === index ? 'true' : 'false'));
+
+    legend(scene);
+    render();
+  }
+
+  scenarios.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.textContent = s.title;
+    b.setAttribute('role', 'tab');
+    b.onclick = () => select(i);
+    tabs.appendChild(b);
+  });
+
+  document.getElementById('scrub').oninput = (e) => {
+    frame = +e.target.value; render();
+  };
+  document.getElementById('restart').onclick = () => { frame = 0; render(); };
+  document.getElementById('play').onclick = (e) => {
+    playing = !playing;
+    e.target.textContent = playing ? 'Pause' : 'Play';
+  };
+
+  timer = setInterval(() => {
+    if (!playing) return;
+    const n = scenarios[active].times.length;
+    frame = (frame + 1) % n;
+    render();
+  }, 70);
+
+  select(0);
+})();
+</script>

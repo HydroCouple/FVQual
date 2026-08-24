@@ -1,0 +1,20 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(FVQual_WITH_NETCDF @FVQual_USE_NETCDF@)
+set(FVQual_WITH_OPENMP @FVQual_USE_OPENMP@)
+
+find_dependency(HydroCoupleSDK 2.0)
+
+if(FVQual_WITH_NETCDF AND NOT TARGET netCDF::netcdf)
+    find_dependency(netCDF)
+endif()
+
+if(FVQual_WITH_OPENMP)
+    find_dependency(OpenMP)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/FVQualTargets.cmake")
+
+check_required_components(FVQual)

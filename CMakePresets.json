@@ -1,0 +1,120 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "FVQual_BUILD_TESTS": "ON",
+                "FVQual_BUILD_APPS": "ON",
+                "VCPKG_MANIFEST_FEATURES": "tests;netcdf",
+                "FVQual_USE_NETCDF": "ON"
+            }
+        },
+        {
+            "name": "linux",
+            "inherits": "default",
+            "displayName": "Linux (Ninja, vcpkg)",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            }
+        },
+        {
+            "name": "macos",
+            "inherits": "default",
+            "displayName": "macOS (Ninja, vcpkg)",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            }
+        },
+        {
+            "name": "windows",
+            "inherits": "default",
+            "displayName": "Windows (Ninja, vcpkg)",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            }
+        },
+        {
+            "name": "no-deps",
+            "inherits": "default",
+            "displayName": "Dependency-light (no vcpkg, no NetCDF)",
+            "cacheVariables": {
+                "FVQual_USE_NETCDF": "OFF",
+                "VCPKG_MANIFEST_MODE": "OFF"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "linux",
+            "configurePreset": "linux"
+        },
+        {
+            "name": "macos",
+            "configurePreset": "macos"
+        },
+        {
+            "name": "windows",
+            "configurePreset": "windows"
+        },
+        {
+            "name": "no-deps",
+            "configurePreset": "no-deps"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "linux",
+            "configurePreset": "linux",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "macos",
+            "configurePreset": "macos",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "windows",
+            "configurePreset": "windows",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "no-deps",
+            "configurePreset": "no-deps",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}

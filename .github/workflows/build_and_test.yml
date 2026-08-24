@@ -1,0 +1,73 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Linux (gcc)",     os: ubuntu-latest }
+          - { name: "macOS (clang)",   os: macos-latest }
+          - { name: "Windows (msvc)",  os: windows-latest }
+
+    steps:
+      - name: Checkout FVQual
+        uses: actions/checkout@v4
+        with:
+          path: FVQual
+
+      # The SDK is not published to a package registry yet, so it is built
+      # in-tree from a source checkout (FVQual_SDK_SOURCE_DIR).
+      - name: Checkout HydroCoupleSDK
+        uses: actions/checkout@v4
+        with:
+          repository: cbuahin/HydroCoupleSDK
+          path: HydroCoupleSDK
+
+      - name: Checkout HydroCouple interfaces
+        uses: actions/checkout@v4
+        with:
+          repository: cbuahin/HydroCouple
+          path: HydroCouple
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Configure
+        working-directory: FVQual
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DFVQual_SDK_SOURCE_DIR=${{ github.workspace }}/HydroCoupleSDK
+          -DFVQual_BUILD_TESTS=ON
+          -DFVQual_USE_NETCDF=OFF
+          -DBUILD_TOOLS=ON
+          -DBUILD_TESTS=OFF
+
+      - name: Build
+        working-directory: FVQual
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: FVQual
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload test outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-${{ matrix.os }}
+          path: FVQual/tests/output/
+          if-no-files-found: ignore

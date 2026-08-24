@@ -1,0 +1,38 @@
+# Build output
+build/
+build-*/
+out/
+install/
+_deps/
+compile_commands.json
+CMakeUserPresets.json
+
+# vcpkg
+vcpkg_installed/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.code-workspace
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test and run artifacts (see CLAUDE.md §4.1 — reviewable outputs live in
+# tests/output/, which is kept but not committed)
+tests/output/**
+!tests/output/.gitkeep
+
+# Documentation build
+docs/html/
+docs/latex/
+
+# Planning documents — kept locally, not published
+plans/
+
+# Verification intermediate: regenerate with
+#   fvqual-verify verification/data.json && python3 verification/build_page.py
+# The rendered page (verification/index.html) is committed; this is not.
+verification/data.json

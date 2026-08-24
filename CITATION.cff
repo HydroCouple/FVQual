@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use FVQual in your research, please cite it as below."
+title: "FVQual: a 3D unstructured finite-volume hydrodynamic and water-quality model"
+abstract: >-
+  FVQual solves three-dimensional hydrostatic free-surface flow and multispecies
+  water quality on unstructured tri-quad meshes with terrain-following sigma
+  layers, using explicit finite-volume kernels and a declarative multispecies
+  reaction engine. It is a HydroCouple 2.0 model component and a successor to
+  the laterally averaged CE-QUAL-W2 model.
+type: software
+license: MIT
+version: 0.1.0-alpha.1
+repository-code: "https://github.com/hydrocouple/FVQual"
+url: "https://hydrocouple.org/projects/fvqual"
+authors:
+  - family-names: Buahin
+    given-names: Caleb
+keywords:
+  - hydrodynamics
+  - water quality
+  - finite volume
+  - unstructured mesh
+  - reservoir modeling
+  - UGRID
+  - HydroCouple
+references:
+  - type: software
+    title: "CE-QUAL-W2: A Two-Dimensional, Laterally Averaged, Hydrodynamic and Water Quality Model"
+    license: MIT
+    repository-code: "https://github.com/CE-QUAL-W2-ERDC/CE-QUAL-W2"
+    url: "https://www.cequalw2.org/"
+    notes: >-
+      Physical formulations in FVQual are reimplemented from the CE-QUAL-W2
+      theory manual; see THIRD_PARTY_LICENSES.md.
+    authors:
+      - name: "Environmental Laboratory, Engineer Research and Development Center, U.S. Army Corps of Engineers"
+      - name: "Portland State University Water Quality Research Group"
