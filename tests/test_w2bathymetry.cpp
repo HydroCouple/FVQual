@@ -28,12 +28,14 @@
  */
 
 #include "fvqual/io/w2bathymetry.h"
+#include "fvqual/io/w2timeseries.h"
 #include "fvqual/mesh/horizontalmesh.h"
 #include "fvqual/mesh/layeredmesh.h"
 #include "fvqual/mesh/sigmaspec.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -361,3 +363,163 @@ TEST(W2Bathymetry, TheDeGrayMeshReproducesTheBathymetrysVolume)
         << "prism " << prism << " against " << modelled;
 }
 
+
+// ── Time series and vertical profiles ─────────────────────────────────────
+
+TEST(W2TimeSeries, AMeteorologyRecordReadsAndInterpolates)
+{
+    if (!haveDeGray()) GTEST_SKIP() << "DeGray inputs not available";
+
+    FVQual::IO::W2TimeSeries met;
+    std::string              message;
+
+    ASSERT_TRUE(met.read("/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/"
+                         "InputFiles/met.npt",
+                         message))
+        << message;
+
+    // JDAY TAIR TDEW WIND PHI CLOUD, so five data columns.
+    ASSERT_EQ(met.columnCount(), 5);
+    EXPECT_EQ(met.columnIndex("TAIR"), 0);
+    EXPECT_EQ(met.columnIndex("CLOUD"), 4);
+    EXPECT_EQ(met.columnIndex("nonesuch"), -1);
+
+    EXPECT_NEAR(met.firstDay(), 1.0, 1.0e-9);
+    EXPECT_NEAR(met.lastDay(), 366.875, 1.0e-9);
+    EXPECT_GT(met.rowCount(), 2000);
+
+    // Exactly on a sample.
+    const int air = met.columnIndex("TAIR");
+    EXPECT_NEAR(met.valueAt(1.0, air), 2.2, 1.0e-9);
+
+    // Half way between the first two samples, which are 2.2 and 1.7.
+    EXPECT_NEAR(met.valueAt(1.0625, air), 1.95, 1.0e-9);
+
+    // Clamped rather than extrapolated outside the record.
+    EXPECT_NEAR(met.valueAt(-50.0, air), 2.2, 1.0e-9);
+    EXPECT_NEAR(met.valueAt(999.0, air), 6.7, 1.0e-9);
+
+    // Air temperature over a year in Arkansas: cold in winter, hot in summer,
+    // and never absurd.
+    double coldest = 1.0e30;
+    double hottest = -1.0e30;
+
+    for (double day = 1.0; day < 366.0; day += 0.1)
+    {
+        const double t = met.valueAt(day, air);
+
+        coldest = std::min(coldest, t);
+        hottest = std::max(hottest, t);
+    }
+
+    EXPECT_LT(coldest, 0.0);
+    EXPECT_GT(hottest, 25.0);
+    EXPECT_GT(coldest, -30.0);
+    EXPECT_LT(hottest, 45.0);
+}
+
+TEST(W2TimeSeries, InflowAndOutflowRecordsRead)
+{
+    if (!haveDeGray()) GTEST_SKIP();
+
+    const std::string base =
+        "/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/InputFiles/";
+
+    FVQual::IO::W2TimeSeries inflow, inflowTemperature, outflow;
+    std::string              message;
+
+    ASSERT_TRUE(inflow.read(base + "qin_br1.npt", message)) << message;
+    ASSERT_TRUE(inflowTemperature.read(base + "tin_br1.npt", message)) << message;
+    ASSERT_TRUE(outflow.read(base + "qot_br1.npt", message)) << message;
+
+    ASSERT_EQ(inflow.columnCount(), 1);
+    EXPECT_EQ(inflow.columnIndex("QIN"), 0);
+    EXPECT_NEAR(inflow.valueAt(2.0, 0), 12.6, 1.0e-9);
+
+    EXPECT_EQ(inflowTemperature.columnIndex("TIN"), 0);
+    EXPECT_NEAR(inflowTemperature.valueAt(2.0, 0), 6.8, 1.0e-9);
+
+    EXPECT_EQ(outflow.columnIndex("QOUT"), 0);
+    EXPECT_NEAR(outflow.valueAt(1.0, 0), 24.39, 1.0e-9);
+
+    // A year of inflow to a reservoir of this size: tens of m³/s on average,
+    // never negative.
+    double total = 0.0;
+    int    count = 0;
+
+    for (double day = 64.5; day < 358.0; day += 1.0)
+    {
+        const double q = inflow.valueAt(day, 0);
+
+        EXPECT_GE(q, 0.0) << "negative inflow on day " << day;
+
+        total += q;
+        ++count;
+    }
+
+    const double mean = total / count;
+
+    EXPECT_GT(mean, 1.0);
+    EXPECT_LT(mean, 500.0);
+}
+
+TEST(W2VerticalProfile, TheInitialProfileConfirmsTheVerticalDatum)
+{
+    if (!haveDeGray()) GTEST_SKIP();
+
+    FVQual::IO::W2VerticalProfile profile;
+    std::string                   message;
+
+    ASSERT_TRUE(profile.read("/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/"
+                             "InputFiles/vpr.npt",
+                             message))
+        << message;
+
+    const std::vector<double> &temperature = profile.profile("TEMP");
+
+    ASSERT_FALSE(temperature.empty());
+
+    // This is the independent check on a datum the bathymetry never states.
+    // With EBOT = 66.35 m and 36 two-metre layers, the surface at 123.80 m
+    // leaves exactly 28 layers wetted — and the profile carries exactly 28
+    // values. A datum wrong by even one layer would not line up.
+    W2Bathymetry bathymetry;
+    ASSERT_TRUE(bathymetry.read(kDeGray, kDeGrayBottom, message)) << message;
+
+    // Counting layers that are both below the surface *and* carry width. W2
+    // pads the grid with zero-width boundary layers at the top and bottom —
+    // K = 1 and K = 36 here — and including one of those was what made this
+    // count come out at 29 against the profile's 28 on the first attempt. The
+    // padding is grid bookkeeping, not reservoir.
+    int wetted = 0;
+
+    for (int k = 0; k < bathymetry.layerCount(); ++k)
+    {
+        if (bathymetry.layerBottom(k) >= 123.8)
+            continue;
+
+        bool carriesWater = false;
+
+        for (int i : bathymetry.activeSegments())
+            carriesWater = carriesWater || bathymetry.width(k, i) > 0.0;
+
+        if (carriesWater)
+            ++wetted;
+    }
+
+    EXPECT_EQ(static_cast<int>(temperature.size()), wetted)
+        << "profile has " << temperature.size() << " values against " << wetted
+        << " wetted layers";
+
+    // March in Arkansas: a cold, nearly unstratified reservoir, warmest at the
+    // top by less than a degree.
+    EXPECT_NEAR(temperature.front(), 7.4, 1.0e-9);
+    EXPECT_NEAR(temperature.back(), 6.5, 1.0e-9);
+
+    for (size_t i = 1; i < temperature.size(); ++i)
+        EXPECT_LE(temperature[i], temperature[i - 1] + 1.0e-9) << "at depth index " << i;
+
+    // Dissolved oxygen came along too, which the DeGray water-quality run needs.
+    EXPECT_FALSE(profile.profile("DO").empty());
+    EXPECT_EQ(profile.profile("DO").size(), temperature.size());
+}

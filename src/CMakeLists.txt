@@ -27,6 +27,7 @@ add_library(fvqual_core
     state/speciesregistry.cpp
     state/statestore.cpp
     io/w2bathymetry.cpp
+    io/w2timeseries.cpp
     io/ugridreader.cpp
     io/layeredugridwriter.cpp
     capi/capi_engine.cpp
