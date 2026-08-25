@@ -648,6 +648,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matches the analytic inverse of the storage curve, with a check that a
   constant-area answer would have been visibly different.
 
+### Added — Phase 8 (F8.1, CE-QUAL-W2 bathymetry ingest)
+
+- `FVQual::IO::W2Bathymetry` reads a W2 bathymetry CSV — segment lengths,
+  orientations, friction, initial water surface, and per-layer widths — and
+  builds a FVQual mesh from it. Thirty years of reservoir schematisations live
+  in this format, and reading one is what turns "passes its analytical
+  benchmarks" into "reproduces a real reservoir".
+- **The vertical datum is a required parameter, not a guess.** The layer rows
+  carry a `K` column and the header names an `ELEV` column, but no example in
+  the W2 distribution populates it: elevations come from the control file's
+  location card as `EBOT`. For DeGray that is 66.35 m, which with 36 two-metre
+  layers puts the initial surface at 123.80 m holding **7.29e8 m³ over
+  5.09e7 m²** — matching the reservoir's published figures, which is how the
+  interpretation was checked.
+- **A segment becomes one column with a storage curve**, using F1.5. W2 is
+  laterally averaged; FVQual is three-dimensional with a plan area that varies
+  with elevation, so `width(z) x DLX` carries the storage the schematisation
+  encodes without pretending the reservoir is a box.
+- **The curve is sampled at layer midpoints**, and that is the load-bearing
+  choice. W2's width is a step function of elevation; a hypsographic curve is
+  piecewise linear; and the integral of a linear function over a layer equals
+  its midpoint value times the thickness — so each layer's volume comes out at
+  exactly `B x DLX x H`. Sampling at layer boundaries averages adjacent widths
+  and loses storage wherever the reservoir narrows, which for DeGray is
+  everywhere. Ablating midpoint to boundary sampling fails the volume gate.
+- Verified against the real file rather than only a synthetic one: FVQual's mesh
+  integrates DeGray's storage to **0.03%** of what W2's own cell arithmetic
+  gives (7.29223e8 against 7.28973e8), on a sigma grid that deliberately does
+  not align with W2's layers — so the agreement is a statement about the storage
+  curve, not about indexing. The prism mesh the same geometry would have
+  produced is **2.40x** too large.
+
 ### Known limitations
 
 - An open boundary cannot do selective withdrawal, and its inflow composition is

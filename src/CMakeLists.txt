@@ -26,6 +26,7 @@ add_library(fvqual_core
     forcing/transfers.cpp
     state/speciesregistry.cpp
     state/statestore.cpp
+    io/w2bathymetry.cpp
     io/ugridreader.cpp
     io/layeredugridwriter.cpp
     capi/capi_engine.cpp

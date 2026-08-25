@@ -19,6 +19,7 @@ add_executable(fvqual_tests
     test_sigmaspec.cpp
     test_layeredmesh.cpp
     test_hypsography.cpp
+    test_w2bathymetry.cpp
     test_barotropic.cpp
     test_equationofstate.cpp
     test_internalmode.cpp

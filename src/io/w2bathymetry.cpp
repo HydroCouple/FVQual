@@ -1,0 +1,533 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Caleb Buahin
+
+#include "fvqual/io/w2bathymetry.h"
+
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <sstream>
+
+namespace FVQual::IO {
+
+namespace {
+
+//! Splits a CSV line into trimmed fields.
+std::vector<std::string> splitCsv(const std::string &line)
+{
+    std::vector<std::string> out;
+    std::string              field;
+    std::istringstream       in(line);
+
+    while (std::getline(in, field, ','))
+    {
+        const auto first = field.find_first_not_of(" \t\r\n");
+
+        if (first == std::string::npos)
+        {
+            out.emplace_back();
+            continue;
+        }
+
+        const auto last = field.find_last_not_of(" \t\r\n");
+
+        out.push_back(field.substr(first, last - first + 1));
+    }
+
+    return out;
+}
+
+//! Reads the numeric fields after the label, stopping at the first blank.
+bool readRow(const std::vector<std::string> &fields, size_t expected,
+             std::vector<double> &out, std::string &why)
+{
+    out.clear();
+
+    for (size_t i = 1; i < fields.size() && out.size() < expected; ++i)
+    {
+        if (fields[i].empty())
+            continue;
+
+        try
+        {
+            out.push_back(std::stod(fields[i]));
+        }
+        catch (const std::exception &)
+        {
+            why = "'" + fields[i] + "' is not a number";
+            return false;
+        }
+    }
+
+    if (out.size() != expected)
+    {
+        why = "expected " + std::to_string(expected) + " values, found " +
+              std::to_string(out.size());
+        return false;
+    }
+
+    return true;
+}
+
+std::string upper(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return text;
+}
+
+} // namespace
+
+bool W2Bathymetry::read(const std::string &path, double bottomElevation,
+                        std::string &message)
+{
+    std::ifstream input(path);
+
+    if (!input)
+    {
+        message = "cannot open bathymetry file '" + path + "'";
+        return false;
+    }
+
+    return parse(input, path, bottomElevation, message);
+}
+
+bool W2Bathymetry::parse(std::istream &input, const std::string &origin,
+                         double bottomElevation, std::string &message)
+{
+    std::vector<double>              length;
+    std::vector<double>              orientation;
+    std::vector<double>              friction;
+    std::vector<double>              surface;
+    std::vector<double>              layerHeight;
+    std::vector<std::vector<double>> width;
+
+    size_t segments = 0;
+    int    number   = 0;
+    bool   inLayers = false;
+
+    std::string line;
+    std::string why;
+
+    const auto fail = [&](const std::string &reason) {
+        message = origin + ":" + std::to_string(number) + ": " + reason;
+        return false;
+    };
+
+    while (std::getline(input, line))
+    {
+        ++number;
+
+        const std::vector<std::string> fields = splitCsv(line);
+
+        if (fields.empty())
+            continue;
+
+        const std::string label = upper(fields.front());
+
+        if (label == "$")
+            continue;
+
+        if (!inLayers)
+        {
+            if (label.empty())
+            {
+                // The segment-index row. Its populated entries fix how many
+                // segments every later row must carry.
+                segments = 0;
+
+                for (size_t i = 1; i < fields.size(); ++i)
+                {
+                    if (!fields[i].empty())
+                        ++segments;
+                }
+
+                if (segments == 0)
+                    return fail("the segment-index row lists no segments");
+
+                continue;
+            }
+
+            if (segments == 0)
+                return fail("'" + label + "' appears before the segment-index row");
+
+            if (label == "DLX")
+            {
+                if (!readRow(fields, segments, length, why))
+                    return fail("DLX: " + why);
+            }
+            else if (label == "ELWS")
+            {
+                if (!readRow(fields, segments, surface, why))
+                    return fail("ELWS: " + why);
+            }
+            else if (label == "PHI0")
+            {
+                if (!readRow(fields, segments, orientation, why))
+                    return fail("PHI0: " + why);
+            }
+            else if (label == "FRIC")
+            {
+                if (!readRow(fields, segments, friction, why))
+                    return fail("FRIC: " + why);
+            }
+            else if (label == "LAYERH")
+            {
+                inLayers = true;
+            }
+            else
+            {
+                return fail("unknown row '" + fields.front() + "'");
+            }
+
+            continue;
+        }
+
+        // Layer rows: thickness, then one width per segment, then the layer
+        // number. The trailing K is ignored — it is a label, and trusting the
+        // row order is what every other reader of this format does.
+        if (fields.front().empty())
+            continue;
+
+        double thickness = 0.0;
+
+        try
+        {
+            thickness = std::stod(fields.front());
+        }
+        catch (const std::exception &)
+        {
+            return fail("layer thickness '" + fields.front() + "' is not a number");
+        }
+
+        if (!(thickness > 0.0))
+            return fail("layer thickness must be positive");
+
+        std::vector<double> row;
+
+        if (!readRow(fields, segments, row, why))
+            return fail("layer widths: " + why);
+
+        for (double w : row)
+        {
+            if (w < 0.0)
+                return fail("a layer width is negative");
+        }
+
+        layerHeight.push_back(thickness);
+        width.push_back(std::move(row));
+    }
+
+    if (length.empty() || layerHeight.empty())
+    {
+        message = origin + ": no segments or no layers were read";
+        return false;
+    }
+
+    if (orientation.empty())
+        orientation.assign(segments, 0.0);
+
+    if (friction.empty())
+        friction.assign(segments, 0.03);
+
+    if (surface.empty())
+        surface.assign(segments, bottomElevation);
+
+    m_length         = std::move(length);
+    m_orientation    = std::move(orientation);
+    m_friction       = std::move(friction);
+    m_initialSurface = std::move(surface);
+    m_layerHeight    = std::move(layerHeight);
+    m_width          = std::move(width);
+    m_bottom         = bottomElevation;
+
+    // W2 pads a branch with zero-width segments at each end; they are grid
+    // bookkeeping, not reservoir, and become no column.
+    m_active.clear();
+
+    for (int i = 0; i < segmentCount(); ++i)
+    {
+        double widest = 0.0;
+
+        for (int k = 0; k < layerCount(); ++k)
+            widest = std::max(widest, m_width[static_cast<size_t>(k)][static_cast<size_t>(i)]);
+
+        if (widest > 0.0)
+            m_active.push_back(i);
+    }
+
+    if (m_active.empty())
+    {
+        message = origin + ": every segment has zero width";
+        return false;
+    }
+
+    message.clear();
+    return true;
+}
+
+double W2Bathymetry::width(int layer, int segment) const
+{
+    if (layer < 0 || layer >= layerCount() || segment < 0 || segment >= segmentCount())
+        return 0.0;
+
+    return m_width[static_cast<size_t>(layer)][static_cast<size_t>(segment)];
+}
+
+double W2Bathymetry::layerBottom(int layer) const
+{
+    // Layer 0 is the top of the grid, so accumulate upward from the bed.
+    double elevation = m_bottom;
+
+    for (int k = layerCount() - 1; k > layer; --k)
+        elevation += m_layerHeight[static_cast<size_t>(k)];
+
+    return elevation;
+}
+
+double W2Bathymetry::volumeAt(double surfaceElevation) const
+{
+    double total = 0.0;
+
+    for (int k = 0; k < layerCount(); ++k)
+    {
+        const double bottom = layerBottom(k);
+        const double top    = bottom + m_layerHeight[static_cast<size_t>(k)];
+
+        const double wetted = std::min(top, surfaceElevation) - bottom;
+
+        if (wetted <= 0.0)
+            continue;
+
+        for (int i : m_active)
+        {
+            total += width(k, i) * m_length[static_cast<size_t>(i)] * wetted;
+        }
+    }
+
+    return total;
+}
+
+double W2Bathymetry::surfaceAreaAt(double surfaceElevation) const
+{
+    double total = 0.0;
+
+    for (int i : m_active)
+    {
+        for (int k = 0; k < layerCount(); ++k)
+        {
+            const double bottom = layerBottom(k);
+            const double top    = bottom + m_layerHeight[static_cast<size_t>(k)];
+
+            if (surfaceElevation > bottom && surfaceElevation <= top && width(k, i) > 0.0)
+            {
+                total += width(k, i) * m_length[static_cast<size_t>(i)];
+                break;
+            }
+        }
+    }
+
+    return total;
+}
+
+bool W2Bathymetry::toMeshDefinition(HydroCouple::SDK::IO::MeshDefinition &definition,
+                                    std::vector<double> &bed, std::string &message) const
+{
+    if (m_active.empty())
+    {
+        message = "no active segments to build a mesh from";
+        return false;
+    }
+
+    definition = HydroCouple::SDK::IO::MeshDefinition{};
+    definition.meshName = "mesh2d";
+
+    bed.clear();
+
+    // Walk the chain of segment centres, then hang a quad off each interval.
+    // PHI0 is measured clockwise from north, so the along-channel unit vector is
+    // (sin, cos) and the cross-channel one is its perpendicular.
+    const size_t count = m_active.size();
+
+    std::vector<double> centreX(count + 1, 0.0);
+    std::vector<double> centreY(count + 1, 0.0);
+    std::vector<double> normalX(count + 1, 0.0);
+    std::vector<double> normalY(count + 1, 0.0);
+
+    double x = 0.0;
+    double y = 0.0;
+
+    for (size_t j = 0; j <= count; ++j)
+    {
+        // At an interior boundary the direction is that of the segment just
+        // upstream of it; at the ends, the single adjacent segment's.
+        const size_t segment = std::min(j, count - 1);
+        const int    index   = m_active[segment];
+
+        const double phi = m_orientation[static_cast<size_t>(index)];
+
+        const double dx = std::sin(phi);
+        const double dy = std::cos(phi);
+
+        centreX[j] = x;
+        centreY[j] = y;
+
+        // Perpendicular, so the quad spans the channel width.
+        normalX[j] = -dy;
+        normalY[j] = dx;
+
+        if (j < count)
+        {
+            const double length = m_length[static_cast<size_t>(m_active[segment])];
+
+            x += dx * length;
+            y += dy * length;
+        }
+    }
+
+    // Half-width at each boundary, from the widths of the adjacent segments at
+    // the initial water surface: that is the plan geometry the model runs at.
+    const auto surfaceWidth = [&](int segment) {
+        const double wse = m_initialSurface[static_cast<size_t>(segment)];
+
+        for (int k = 0; k < layerCount(); ++k)
+        {
+            const double bottom = layerBottom(k);
+            const double top    = bottom + m_layerHeight[static_cast<size_t>(k)];
+
+            if (wse > bottom && wse <= top && width(k, segment) > 0.0)
+                return width(k, segment);
+        }
+
+        // The surface may sit above every wetted layer; fall back to the widest.
+        double widest = 0.0;
+
+        for (int k = 0; k < layerCount(); ++k)
+            widest = std::max(widest, width(k, segment));
+
+        return widest;
+    };
+
+    for (size_t j = 0; j <= count; ++j)
+    {
+        double half = 0.0;
+
+        if (j == 0)
+            half = 0.5 * surfaceWidth(m_active[0]);
+        else if (j == count)
+            half = 0.5 * surfaceWidth(m_active[count - 1]);
+        else
+            half = 0.25 * (surfaceWidth(m_active[j - 1]) + surfaceWidth(m_active[j]));
+
+        if (!(half > 0.0))
+        {
+            message = "segment " + std::to_string(m_active[std::min(j, count - 1)]) +
+                      " has no width at the initial water surface";
+            return false;
+        }
+
+        definition.nodeX.push_back(centreX[j] - half * normalX[j]);
+        definition.nodeY.push_back(centreY[j] - half * normalY[j]);
+        definition.nodeX.push_back(centreX[j] + half * normalX[j]);
+        definition.nodeY.push_back(centreY[j] + half * normalY[j]);
+    }
+
+    definition.faceNodeOffsets.push_back(0);
+
+    for (size_t j = 0; j < count; ++j)
+    {
+        const int64_t left0  = static_cast<int64_t>(2 * j);
+        const int64_t right0 = static_cast<int64_t>(2 * j + 1);
+        const int64_t left1  = static_cast<int64_t>(2 * (j + 1));
+        const int64_t right1 = static_cast<int64_t>(2 * (j + 1) + 1);
+
+        definition.faceNodes.push_back(left0);
+        definition.faceNodes.push_back(left1);
+        definition.faceNodes.push_back(right1);
+        definition.faceNodes.push_back(right0);
+
+        definition.faceNodeOffsets.push_back(
+            static_cast<int64_t>(definition.faceNodes.size()));
+
+        // The bed is the bottom of the deepest layer that carries water.
+        const int segment = m_active[j];
+
+        double lowest = m_initialSurface[static_cast<size_t>(segment)];
+
+        for (int k = 0; k < layerCount(); ++k)
+        {
+            if (width(k, segment) > 0.0)
+                lowest = std::min(lowest, layerBottom(k));
+        }
+
+        bed.push_back(lowest);
+    }
+
+    message.clear();
+    return true;
+}
+
+bool W2Bathymetry::applyHypsography(Mesh::LayeredMesh &mesh, std::string &message) const
+{
+    if (static_cast<size_t>(mesh.columnCount()) != m_active.size())
+    {
+        message = "the mesh has " + std::to_string(mesh.columnCount()) +
+                  " columns but the bathymetry has " + std::to_string(m_active.size()) +
+                  " active segments";
+        return false;
+    }
+
+    for (size_t j = 0; j < m_active.size(); ++j)
+    {
+        const int segment = m_active[j];
+
+        std::vector<double> elevation;
+        std::vector<double> area;
+
+        // Sampled at layer midpoints, deepest first. The integral of a linear
+        // interpolant over a layer equals its midpoint value times the
+        // thickness, so each layer's volume comes out at exactly B x DLX x H —
+        // sampling at layer boundaries would average adjacent widths and lose
+        // storage wherever the reservoir narrows.
+        for (int k = layerCount() - 1; k >= 0; --k)
+        {
+            const double w = width(k, segment);
+
+            if (w <= 0.0)
+                continue;
+
+            const double bottom = layerBottom(k);
+            const double middle = bottom + 0.5 * m_layerHeight[static_cast<size_t>(k)];
+
+            const double planArea = w * m_length[static_cast<size_t>(segment)];
+
+            if (!elevation.empty() && planArea < area.back())
+            {
+                // W2 permits a segment to narrow upward; a storage curve cannot,
+                // because it would make stage a non-unique function of volume.
+                // Hold the wider value rather than refusing the whole file.
+                elevation.push_back(middle);
+                area.push_back(area.back());
+                continue;
+            }
+
+            elevation.push_back(middle);
+            area.push_back(planArea);
+        }
+
+        if (elevation.size() < 2)
+        {
+            message = "segment " + std::to_string(segment) +
+                      " has fewer than two wetted layers, so it has no storage curve";
+            return false;
+        }
+
+        if (!mesh.setHypsography(static_cast<int64_t>(j), elevation, area, message))
+            return false;
+    }
+
+    message.clear();
+    return true;
+}
+
+} // namespace FVQual::IO
