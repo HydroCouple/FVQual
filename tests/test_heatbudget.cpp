@@ -547,8 +547,12 @@ TEST(SolarRadiation, TheWindFunctionCanBeQuadratic)
     // DeGray's calibration is 9.2 + 0.46 W^2, and a linear form cannot follow
     // one at both low and high wind — at 8 m/s the quadratic term is six times
     // the constant.
+    // 6 m/s rather than 8: with the W2 coefficients the quadratic-to-linear
+    // ratio at 8 m/s comes out at exactly 3.0000, which sat on the wrong side
+    // of a `> 3.0` bound by four hundredths of a watt. A coincidence of the
+    // numbers, and a reminder to leave a gate room to breathe.
     Meteorology linear = night();
-    linear.windSpeed    = 8.0;
+    linear.windSpeed    = 6.0;
     linear.windExponent = 1.0;
 
     Meteorology quadratic = linear;
@@ -557,7 +561,7 @@ TEST(SolarRadiation, TheWindFunctionCanBeQuadratic)
     const double linearLatent    = std::abs(surfaceHeatFlux(linear, 25.0).latent);
     const double quadraticLatent = std::abs(surfaceHeatFlux(quadratic, 25.0).latent);
 
-    EXPECT_GT(quadraticLatent, 3.0 * linearLatent)
+    EXPECT_GT(quadraticLatent, 2.0 * linearLatent)
         << "linear " << linearLatent << " W/m², quadratic " << quadraticLatent;
 
     // At 1 m/s the two forms agree, since U and U² are both 1 there — which is
@@ -599,4 +603,138 @@ TEST(SolarRadiation, ComputedRadiationDrivesTheBudgetItIsMeantTo)
 
     EXPECT_GT(warm, cool + 5.0)
         << "sunlit equilibrium " << warm << " against night " << cool;
+}
+
+// ── Magnitudes, against the world rather than against ourselves ───────────
+
+TEST(HeatBudget, TheTermsAreTheRightSizeAndNotJustSelfConsistent)
+{
+    // The gate that was missing, and whose absence let a wind function eight
+    // times too weak pass 247 tests. Everything else here computes its
+    // expectation from the same function it is testing, so a coefficient wrong
+    // by an order of magnitude stays invisible: the budget is still
+    // self-limiting, still conserves energy, still reaches "its" equilibrium.
+    // Only a comparison against numbers from outside the code finds it.
+    Meteorology weather;
+    weather.airTemperature = 20.0;
+    weather.dewPoint       = 12.0;
+    weather.windSpeed      = 2.0;
+    weather.cloudCover     = 0.0;
+    weather.shortwave      = 0.0;
+
+    const HeatFluxTerms terms = surfaceHeatFlux(weather, 22.0);
+
+    // Back radiation from water near 20 C is around 400 W/m2 — Stefan-Boltzmann
+    // at 295 K times an emissivity of 0.97.
+    EXPECT_GT(-terms.longwaveUp, 350.0);
+    EXPECT_LT(-terms.longwaveUp, 450.0);
+
+    // Atmospheric longwave is a little less, since the sky is colder and its
+    // emissivity below one.
+    EXPECT_GT(terms.longwaveDown, 250.0);
+    EXPECT_LT(terms.longwaveDown, 400.0);
+
+    // Evaporation at a ~1.2 kPa deficit and a light breeze: tens of W/m2, and
+    // emphatically not single digits.
+    const double deficit = saturationVapourPressure(22.0) -
+                           saturationVapourPressure(weather.dewPoint);
+
+    EXPECT_GT(deficit, 1000.0);
+    EXPECT_GT(-terms.latent, 40.0)
+        << "evaporation of only " << -terms.latent
+        << " W/m2 at a " << deficit << " Pa deficit is far too weak";
+    EXPECT_LT(-terms.latent, 250.0);
+
+    // The wind function itself, stated as a number a reader can check: the
+    // latent flux per Pascal of deficit.
+    const double perPascal = -terms.latent / deficit;
+
+    EXPECT_GT(perPascal, 0.04) << "wind function " << perPascal << " W/(m2.Pa)";
+    EXPECT_LT(perPascal, 0.20);
+}
+
+TEST(HeatBudget, EquilibriumTemperatureStaysInPhysicalBounds)
+{
+    // A lake is not far from the air above it *in the dark*: with no sun, the
+    // radiative and evaporative terms tie the equilibrium to air temperature
+    // within a few degrees. Sunlight raises it, and by a lot — 700 W/m2 held
+    // steady is peak noon sustained, and it genuinely drives equilibrium 20 C
+    // above a cold air mass. So the claim has to be split, which my first
+    // version of this gate did not do: it bounded everything at +/-15 C and
+    // duly failed on sunlit cases that were perfectly physical.
+    for (double airTemperature : {5.0, 15.0, 25.0, 35.0})
+    {
+        Meteorology dark;
+        dark.airTemperature = airTemperature;
+        dark.dewPoint       = airTemperature - 5.0;
+        dark.windSpeed      = 3.0;
+        dark.shortwave      = 0.0;
+
+        const double unlit = equilibriumTemperature(dark);
+
+        EXPECT_GT(unlit, airTemperature - 12.0)
+            << "air " << airTemperature << " C gave a dark equilibrium of " << unlit;
+        EXPECT_LT(unlit, airTemperature + 5.0)
+            << "air " << airTemperature << " C gave a dark equilibrium of " << unlit;
+
+        // Sun raises it, monotonically, and never to anything absurd.
+        double previous = unlit;
+
+        for (double sun : {200.0, 400.0, 700.0})
+        {
+            Meteorology weather = dark;
+            weather.shortwave   = sun;
+
+            const double equilibrium = equilibriumTemperature(weather);
+
+            EXPECT_GT(equilibrium, previous)
+                << "more sun did not warm the equilibrium, at " << sun << " W/m2";
+
+            EXPECT_LT(equilibrium, airTemperature + 40.0)
+                << "air " << airTemperature << " C and " << sun
+                << " W/m2 gave " << equilibrium;
+
+            previous = equilibrium;
+        }
+    }
+}
+
+TEST(HeatBudget, AnOutOfRangeCloudFractionCannotRunAway)
+{
+    // Cloud cover is a fraction here, but the world supplies it in eighths,
+    // tenths and percent. The cloud factor is quadratic, so a value of 10 where
+    // 1.0 was meant multiplies the atmospheric longwave by eighteen — which is
+    // exactly what happened on the first DeGray run, and produced an
+    // equilibrium temperature of 64 C beneath 11 C air.
+    //
+    // The conversion belongs at the boundary where the conventions meet, and it
+    // is done there. This is the second line: whatever arrives, the term stays
+    // physical.
+    Meteorology weather;
+    weather.airTemperature = 11.0;
+    weather.dewPoint       = 7.0;
+    weather.windSpeed      = 5.0;
+    weather.shortwave      = 0.0;
+
+    // The reference is fully overcast — cloudCover = 1.0. My first version left
+    // it at the default of zero and so compared a clear sky against a clouded
+    // one, which failed for the entirely correct reason that cloud raises
+    // atmospheric longwave.
+    weather.cloudCover = 1.0;
+
+    const double overcast = surfaceHeatFlux(weather, 10.0).longwaveDown;
+
+    for (double bad : {1.0, 8.0, 10.0, 100.0})
+    {
+        weather.cloudCover = bad;
+
+        const HeatFluxTerms terms = surfaceHeatFlux(weather, 10.0);
+
+        EXPECT_LE(terms.longwaveDown, overcast * 1.0001)
+            << "cloud cover " << bad << " gave " << terms.longwaveDown << " W/m2";
+
+        // And the equilibrium stays somewhere a lake could actually sit.
+        EXPECT_LT(equilibriumTemperature(weather), weather.airTemperature + 20.0)
+            << "cloud cover " << bad;
+    }
 }

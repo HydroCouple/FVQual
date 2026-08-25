@@ -698,6 +698,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and night above the Arctic circle, symmetry about solar noon, and a clear
   midsummer daily total of 20-40 MJ/m² at DeGray's latitude.
 
+### Added — Phase 8 (DeGray Reservoir, end to end)
+
+- `fvqual-degray` runs CE-QUAL-W2's DeGray example through FVQual for March to
+  December 1980: real bathymetry, meteorology with computed solar radiation,
+  density-placed inflow, withdrawal at the dam, and the initial profile from
+  `vpr.npt`. Results and a full account are in `verification/degray/`.
+- The reservoir starts nearly isothermal at 7.4/6.5 °C, stratifies through
+  spring, holds a cold hypolimnion all summer while the surface peaks at
+  **31.4 °C** on day 198, deepens its thermocline through autumn, and turns over
+  by December to an isothermal ~9.9 °C. Maximum stratification 24.3 °C. Every
+  one of those is what DeGray does.
+- **It is not a code-to-code validation**, and the distinction matters: the W2
+  distribution ships DeGray's inputs but no output, so there is nothing to
+  compare against. It is judged on physics, which catches gross errors and would
+  not catch a subtle formulation difference. Nor does it exercise
+  three-dimensionality — a laterally-averaged schematisation is one segment
+  wide, so the mesh is a chain of columns.
+
+### Fixed — found by the DeGray run, not by the test suite
+
+- **The evaporative wind function was roughly eight times too weak**: 10 W/m² at
+  a 1000 Pa vapour deficit where the physical value is nearer 80. Evaporation is
+  the dominant cooling term at high temperature, so equilibrium temperature ran
+  tens of degrees high and peak surface temperature reached **124 °C**. The
+  defaults are now CE-QUAL-W2's `9.2 + 0.46 W²` converted to SI.
+  **247 unit tests passed over this**, because every heat-budget gate computed
+  its expectation from the same function it was testing — the budget was still
+  self-limiting, still conservative, still reached "its" equilibrium. A new gate
+  compares the terms against magnitudes from outside the code.
+- **Cloud cover units at the W2 boundary.** W2 records cloud in tenths (0–10);
+  the budget wants a fraction. The cloud factor is quadratic, so a value of 10
+  multiplied the atmospheric longwave by **eighteen**, and peak surface
+  temperature was still 76 °C after the wind function was fixed. Converted at
+  the boundary where the conventions meet, and `surfaceHeatFlux` now clamps —
+  it had not, while `clearSkySolarRadiation` did, and two functions in the same
+  file disagreeing about what a cloud fraction is was the underlying fault.
+
 ### Known limitations
 
 - An open boundary cannot do selective withdrawal, and its inflow composition is

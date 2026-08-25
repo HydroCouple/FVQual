@@ -92,16 +92,25 @@ struct FVQual_EXPORT Meteorology
      * that the latent flux is `f(U) * (e_s(T_s) - e_a)`.
      *
      * The exponent exists because calibrated wind functions are routinely
-     * quadratic — CE-QUAL-W2's DeGray application uses `9.2 + 0.46 W²` — and a
-     * linear form cannot represent one at both low and high wind. The defaults
-     * here are a Ryan-Harleman-style linear fit in SI.
+     * quadratic — CE-QUAL-W2's DeGray application uses `9.2 + 0.46 W²` in
+     * W/(m²·mmHg) — and a linear form cannot represent one at both low and high
+     * wind.
+     *
+     * The defaults are exactly that W2 form converted to SI by dividing by
+     * 133.322 Pa/mmHg. They replace an earlier guess that was roughly eight
+     * times too small: it gave a latent flux of 10 W/m² at a 1000 Pa vapour
+     * deficit where the physical value is nearer 80, and since evaporation is
+     * the dominant cooling term at high temperature, that pushed the
+     * equilibrium temperature tens of degrees too high. Nothing in the unit
+     * tests caught it, because they all computed their expectations from the
+     * same function; a whole-reservoir run did, immediately.
      *
      * This is the least universal part of any heat budget and the first thing
      * recalibrated per site, which is why all three are exposed.
      */
-    double evaporationA = 3.0e-3;
-    double evaporationB = 1.8e-3;
-    double windExponent = 1.0;
+    double evaporationA = 6.901e-2;
+    double evaporationB = 3.450e-3;
+    double windExponent = 2.0;
 
     /*!
      * \brief Psychrometric constant (Pa/K) at standard pressure.

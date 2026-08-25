@@ -10,4 +10,10 @@ if(FVQual_USE_NETCDF)
     target_compile_definitions(fvqual PRIVATE FVQual_HAVE_NETCDF)
 endif()
 
-install(TARGETS fvqual RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+add_executable(fvqual-degray degray/main.cpp)
+
+target_link_libraries(fvqual-degray PRIVATE FVQual::fvqual_core)
+target_compile_features(fvqual-degray PRIVATE cxx_std_20)
+
+install(TARGETS fvqual fvqual-degray
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

@@ -49,7 +49,14 @@ HeatFluxTerms surfaceHeatFlux(const Meteorology &weather,
     const double airK      = kelvin(weather.airTemperature);
     const double emissivity = 0.937e-5 * airK * airK;
 
-    const double cloud = 1.0 + 0.17 * weather.cloudCover * weather.cloudCover;
+    // Clamped, because clearSkySolarRadiation clamps and these two must agree
+    // about what a cloud fraction is. They did not, and it cost a whole DeGray
+    // run: CE-QUAL-W2 records cloud in tenths, so a value of 10 arrived here
+    // and `1 + 0.17 C^2` turned the atmospheric longwave into eighteen times
+    // itself — an equilibrium temperature of 64 C under 11 C air.
+    const double cover = std::clamp(weather.cloudCover, 0.0, 1.0);
+
+    const double cloud = 1.0 + 0.17 * cover * cover;
 
     terms.longwaveDown = (1.0 - weather.longwaveReflection) * emissivity *
                          kStefanBoltzmann * airK * airK * airK * airK * cloud;
