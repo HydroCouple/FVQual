@@ -5,6 +5,14 @@ bathymetry, real meteorology, real inflows and outflows, real initial
 conditions.
 
     fvqual-degray <w2-input-directory> <output-directory>
+    python3 plot_degray.py [output-directory] [bth1.csv]
+    python3 verify_figures.py [output-directory]
+
+The run writes `degray_daily.csv` (one row a day), `degray_profiles.csv` (the
+whole profile at the dam, every day) and `degray_final_profile.csv`. The plot
+script draws five figures from them; the verify script restates every claim the
+figures make as an inequality over the same data and exits non-zero if one of
+them is not true.
 
 ## What this is
 
@@ -36,19 +44,45 @@ three-dimensionality FVQual exists for is not exercised at all.
 | Quantity | Value | Expected for DeGray |
 |---|---|---|
 | Initial surface / bottom | 7.4 / 6.5 °C | matches `vpr.npt` |
-| Peak surface temperature | 31.4 °C, day 198 | ~30 °C in midsummer |
-| Hypolimnion through summer | 6.5 → 7.4 °C | retains winter temperature |
-| Maximum stratification | 24.3 °C | ~22 °C |
-| Thermocline, midsummer | 5–7 m | 5–15 m |
-| Thermocline, December | 35 m | turnover complete |
+| Peak surface temperature | 30.9 °C, day 197 | ~30 °C in midsummer |
+| Hypolimnion through summer | 6.5 → 8.4 °C | retains winter temperature |
+| Maximum stratification | 23.8 °C, day 192 | ~22 °C |
+| Thermocline, midsummer | 5.2 m mean | 5–15 m |
+| Thermocline, October | 13.0 m mean | deepening |
 | Final profile | isothermal ~9.9 °C | isothermal ~9–10 °C |
-| Volume change | +1.4% | small, inflow/outflow balance |
+| Volume excursion | −11.9% then +1.4% | summer drawdown, autumn refill |
 
 The reservoir starts nearly isothermal, stratifies through spring, holds a cold
 hypolimnion all summer while the surface reaches 31 °C, then deepens its
 thermocline through autumn and turns over by December. Surface temperature
 tracks below the instantaneous equilibrium temperature throughout, which is what
 thermal inertia does.
+
+## Figures
+
+| File | What it shows |
+|---|---|
+| `degray_isotherms.png` | Temperature against depth and time at the dam — the whole run in one frame |
+| `degray_temperatures.png` | Surface and bottom against the equilibrium temperature, and the stratification cycle |
+| `degray_profiles.png` | Five profiles through the year, as a thermal survey would report them |
+| `degray_budgets.png` | Whole-reservoir heat content and volume |
+| `degray_stage_storage.png` | The model's stage-storage against the raw bathymetry file's |
+
+The stage-storage figure is the one that can fail. `plot_degray.py` re-derives
+DeGray's storage curve in Python straight from `bth1.csv`, independently of
+anything the C++ computed, and plots every day of the run against it. The two
+agree to **0.22% at worst**, and the recovered `dV/dz` is 4.98e7 m² against the
+reservoir's 5.09e7 m² plan area at full pool. The residual is systematically
+positive and correlates with drawdown at r = −0.76, which is the 30-layer sigma
+mesh sampling a storage curve the file resolves in 36 layers — a discretisation
+difference, not a leak.
+
+The steepest-gradient line on the isotherm figure is masked below 2 °C of
+stratification. Spread 2 °C over 55 m and the tracker is choosing between layer
+differences the size of the transport's own round-off. It still oscillates
+through November, and that part is real: during turnover the profile has two
+competing maxima — a sharp shallow one near 2 m and the eroding metalimnion base
+near 20–40 m — and they trade places from day to day.
 
 ## What this run found
 
@@ -67,3 +101,15 @@ Two defects that 247 passing unit tests did not, both in the heat budget:
 
 Both now have gates: one comparing the terms against magnitudes from outside the
 code, one ensuring an out-of-range cloud value cannot run away.
+
+A third turned up when the figures were checked against their own data. The
+daily report was scheduled as `nextWrite = day + 1.0`, rebasing on the time
+actually reached rather than advancing a fixed schedule, so each step's overshoot
+carried forward: the report drifted from 12:05 in March to 17:00 in December. The
+run was sampling a steadily later hour of the diurnal cycle and aliasing it into
+the seasonal signal. The trajectory was never affected — the same 119,750 steps
+run either way — but the reported peak surface temperature fell from 31.4 °C to
+30.9 °C once the sample was consistent, and the daily series lost a wobble that
+had nothing to do with the reservoir. Caught by asserting that a caption reading
+"near solar noon" was true of the timestamps, which is not where one expects to
+find a timing bug.

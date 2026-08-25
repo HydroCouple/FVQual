@@ -326,6 +326,17 @@ int main(int argc, char **argv)
              "air_temperature_C,shortwave_W_m2\n";
     daily.precision(6);
 
+    // The whole profile at the dam, every day. Surface and bottom temperatures
+    // say a reservoir stratified; only the profile says whether it stratified
+    // the way a reservoir does, and the depth-time contour drawn from this is
+    // the figure a limnologist would ask for first. Depth is written per row
+    // rather than implied by the layer index, because the sigma grid moves with
+    // the surface and a layer is not at a fixed depth.
+    std::ofstream profiles(outputs + "/degray_profiles.csv");
+
+    profiles << "jday,layer,depth_m,elevation_m,temperature_C\n";
+    profiles.precision(6);
+
     const double capacity = options.referenceDensity * options.heatCapacity;
 
     double day       = kStartDay;
@@ -377,7 +388,14 @@ int main(int argc, char **argv)
         if (day < nextWrite)
             continue;
 
-        nextWrite = day + 1.0;
+        // Advance the schedule, do not rebase it on the time actually reached.
+        // Rebasing carries each step's overshoot forward, and with a 300 s cap
+        // that is up to five minutes a day: the report drifted from 12:05 in
+        // March to 17:00 in December, sampling a steadily later hour of a
+        // diurnal cycle and aliasing it into the seasonal signal. Found by
+        // checking a figure's caption against its data, which is not where one
+        // expects to find a timing bug.
+        nextWrite += 1.0;
 
         // Report from the deepest column, at the dam, where a profile would be
         // taken.
@@ -422,9 +440,19 @@ int main(int argc, char **argv)
               << layered.totalVolume() << ',' << heat << ','
               << FVQual::Hydro::equilibriumTemperature(weather) << ','
               << weather.airTemperature << ',' << weather.shortwave << '\n';
+
+        for (int k = 0; k < kLayers; ++k)
+        {
+            const double centre = 0.5 * (layered.z(deep, k) + layered.z(deep, k + 1));
+
+            profiles << day << ',' << k << ',' << layered.z(deep, 0) - centre << ','
+                     << centre << ','
+                     << state.speciesAt(temperature, layered.cell(deep, k)) << '\n';
+        }
     }
 
     daily.close();
+    profiles.close();
 
     // Final profile at the dam, which is what a thermal survey would report.
     std::ofstream final(outputs + "/degray_final_profile.csv");
@@ -444,8 +472,8 @@ int main(int argc, char **argv)
 
     final.close();
 
-    std::printf("ran %lld internal steps to day %.2f; wrote degray_daily.csv and "
-                "degray_final_profile.csv to %s\n",
+    std::printf("ran %lld internal steps to day %.2f; wrote degray_daily.csv, "
+                "degray_profiles.csv and degray_final_profile.csv to %s\n",
                 static_cast<long long>(steps), day, outputs.c_str());
 
     return 0;

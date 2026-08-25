@@ -706,9 +706,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `vpr.npt`. Results and a full account are in `verification/degray/`.
 - The reservoir starts nearly isothermal at 7.4/6.5 °C, stratifies through
   spring, holds a cold hypolimnion all summer while the surface peaks at
-  **31.4 °C** on day 198, deepens its thermocline through autumn, and turns over
-  by December to an isothermal ~9.9 °C. Maximum stratification 24.3 °C. Every
-  one of those is what DeGray does.
+  **30.9 °C** on day 197, deepens its thermocline from 5.2 m at midsummer to
+  13.0 m in October, and turns over by December to an isothermal ~9.9 °C.
+  Maximum stratification 23.8 °C. Every one of those is what DeGray does.
+- The driver also writes the whole profile at the dam every day
+  (`degray_profiles.csv`), which is what the depth-time contour is drawn from.
+  Surface and bottom temperatures say a reservoir stratified; only the profile
+  says whether it stratified the way a reservoir does.
+- `verification/degray/plot_degray.py` draws five figures and
+  `verify_figures.py` restates every claim they make as an inequality over the
+  same CSV data, exiting non-zero if one is not true. Annotated numbers are
+  computed from the data rather than typed, so they cannot drift; the checks
+  exist for the words, which do not recompute themselves.
+- **The stage-storage figure is an independent cross-check, not decoration.**
+  The plot script re-derives DeGray's storage curve in Python straight from
+  `bth1.csv`, with no reference to anything the C++ computed, and plots every
+  day of the run against it. They agree to **0.22% at worst**, and `dV/dz`
+  recovered from the run is 4.98e7 m² against the reservoir's 5.09e7 m² plan
+  area at full pool — the hypsographic mesh and the barotropic mode agreeing
+  through a curve neither of them was told.
 - **It is not a code-to-code validation**, and the distinction matters: the W2
   distribution ships DeGray's inputs but no output, so there is nothing to
   compare against. It is judged on physics, which catches gross errors and would
@@ -734,6 +750,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the boundary where the conventions meet, and `surfaceHeatFlux` now clamps —
   it had not, while `clearSkySolarRadiation` did, and two functions in the same
   file disagreeing about what a cloud fraction is was the underlying fault.
+- **The daily report drifted five hours through the run.** The schedule was
+  `nextWrite = day + 1.0`, rebasing on the time actually reached instead of
+  advancing a fixed schedule, so each step's overshoot carried forward — up to
+  five minutes a day under the 300 s cap. The report walked from 12:05 in March
+  to 17:00 in December, sampling a steadily later hour of the diurnal cycle and
+  aliasing it into the seasonal signal. The trajectory was never affected, the
+  same 119,750 steps either way, but the reported peak surface temperature fell
+  from 31.4 °C to 30.9 °C once the sample was consistent. Found by asserting
+  that a figure caption reading "near solar noon" was true of the timestamps.
 
 ### Known limitations
 

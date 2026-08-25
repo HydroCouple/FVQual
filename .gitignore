@@ -38,3 +38,7 @@ plans/
 #   fvqual-verify verification/data.json && python3 verification/build_page.py
 # The rendered page (verification/index.html) is committed; this is not.
 verification/data.json
+
+# Python bytecode
+__pycache__/
+*.py[cod]
