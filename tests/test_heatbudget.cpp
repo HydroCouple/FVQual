@@ -419,3 +419,184 @@ TEST(HeatBudgetSolver, TheBudgetIsInertUntilItIsEnabled)
     for (int k = 0; k < basin.layers; ++k)
         EXPECT_NEAR(basin.at(k), 15.0, 1.0e-9) << "layer " << k;
 }
+
+// ── Solar geometry and radiation ──────────────────────────────────────────
+
+TEST(SolarRadiation, DeclinationMatchesTheSolsticesAndEquinoxes)
+{
+    // Solar geometry is the one part of a heat budget with exact reference
+    // values, so it is checked against them rather than against itself. The
+    // Earth's tilt is 23.44 degrees, and the declination reaches it at the
+    // solstices and passes through zero at the equinoxes.
+    using FVQual::Hydro::solarPosition;
+
+    constexpr double kDegrees = 57.29577951308232;
+
+    // Day numbers: equinoxes near 80 and 266, solstices near 172 and 355.
+    EXPECT_NEAR(solarPosition(80.5, 0.0).declination * kDegrees, 0.0, 1.0);
+    EXPECT_NEAR(solarPosition(266.5, 0.0).declination * kDegrees, 0.0, 1.5);
+
+    EXPECT_NEAR(solarPosition(172.5, 0.0).declination * kDegrees, 23.45, 0.5);
+    EXPECT_NEAR(solarPosition(355.5, 0.0).declination * kDegrees, -23.45, 0.5);
+
+    // And it never leaves the tropics.
+    for (double day = 1.0; day < 366.0; day += 1.0)
+    {
+        const double declination = solarPosition(day + 0.5, 0.0).declination * kDegrees;
+
+        EXPECT_LE(std::abs(declination), 23.46) << "day " << day;
+    }
+}
+
+TEST(SolarRadiation, DayLengthIsTwelveHoursAtTheEquatorAndPolarAtThePoles)
+{
+    using FVQual::Hydro::dayLength;
+
+    // The equator gets twelve hours all year — the cleanest check there is on
+    // the geometry, and one that fails for almost any sign or units error.
+    for (double day : {1.0, 80.0, 172.0, 266.0, 355.0})
+        EXPECT_NEAR(dayLength(day + 0.5, 0.0), 12.0, 0.05) << "day " << day;
+
+    // Midsummer above the Arctic circle: the sun does not set.
+    EXPECT_NEAR(dayLength(172.5, 78.0), 24.0, 1.0e-9);
+
+    // Midwinter there: it does not rise.
+    EXPECT_NEAR(dayLength(355.5, 78.0), 0.0, 1.0e-9);
+
+    // Mid-latitude summer is long and winter is short, and they are symmetric
+    // about twelve.
+    const double summer = dayLength(172.5, 45.0);
+    const double winter = dayLength(355.5, 45.0);
+
+    EXPECT_GT(summer, 15.0);
+    EXPECT_LT(winter, 9.0);
+    EXPECT_NEAR(summer + winter, 24.0, 0.3);
+}
+
+TEST(SolarRadiation, RadiationIsZeroAtNightAndPeaksAtSolarNoon)
+{
+    using FVQual::Hydro::clearSkySolarRadiation;
+
+    constexpr double latitude = 34.2; // DeGray.
+
+    // Midnight and the small hours: the sun is below the horizon.
+    for (double hour : {0.0, 2.0, 22.0})
+    {
+        const double day = 172.0 + hour / 24.0;
+
+        EXPECT_EQ(clearSkySolarRadiation(day, latitude, 0.0), 0.0)
+            << "hour " << hour;
+    }
+
+    // Noon is the maximum, and the curve is symmetric about it.
+    const double noon = clearSkySolarRadiation(172.5, latitude, 0.0);
+
+    EXPECT_GT(noon, 700.0) << "midsummer noon at " << latitude << " deg";
+    EXPECT_LT(noon, 1100.0);
+
+    for (double offset : {1.0, 2.0, 3.0})
+    {
+        const double before = clearSkySolarRadiation(172.5 - offset / 24.0, latitude, 0.0);
+        const double after  = clearSkySolarRadiation(172.5 + offset / 24.0, latitude, 0.0);
+
+        EXPECT_LT(before, noon) << "offset " << offset;
+        EXPECT_NEAR(before, after, 1.0e-9 * std::max(before, 1.0))
+            << "the day is not symmetric about noon at offset " << offset;
+    }
+}
+
+TEST(SolarRadiation, SummerDeliversMoreThanWinterAndCloudReducesIt)
+{
+    using FVQual::Hydro::clearSkySolarRadiation;
+
+    constexpr double latitude = 34.2;
+
+    // Daily totals, by trapezoid over the day.
+    const auto dailyTotal = [&](double day, double cloud) {
+        double total = 0.0;
+
+        for (int i = 0; i < 24 * 6; ++i)
+        {
+            const double t = day + static_cast<double>(i) / (24.0 * 6.0);
+
+            total += clearSkySolarRadiation(t, latitude, cloud) * 600.0;
+        }
+
+        return total; // J/m²
+    };
+
+    const double summer = dailyTotal(172.0, 0.0);
+    const double winter = dailyTotal(355.0, 0.0);
+
+    EXPECT_GT(summer, 2.0 * winter)
+        << "summer " << summer << " J/m², winter " << winter;
+
+    // Magnitudes a solar engineer would recognise: a clear midsummer day at
+    // this latitude delivers of order 25-35 MJ/m².
+    EXPECT_GT(summer, 20.0e6);
+    EXPECT_LT(summer, 40.0e6);
+
+    // Overcast roughly halves it, per the 1 - 0.65 C^2 reduction.
+    const double overcast = dailyTotal(172.0, 1.0);
+
+    EXPECT_NEAR(overcast / summer, 0.35, 0.02);
+}
+
+TEST(SolarRadiation, TheWindFunctionCanBeQuadratic)
+{
+    // DeGray's calibration is 9.2 + 0.46 W^2, and a linear form cannot follow
+    // one at both low and high wind — at 8 m/s the quadratic term is six times
+    // the constant.
+    Meteorology linear = night();
+    linear.windSpeed    = 8.0;
+    linear.windExponent = 1.0;
+
+    Meteorology quadratic = linear;
+    quadratic.windExponent = 2.0;
+
+    const double linearLatent    = std::abs(surfaceHeatFlux(linear, 25.0).latent);
+    const double quadraticLatent = std::abs(surfaceHeatFlux(quadratic, 25.0).latent);
+
+    EXPECT_GT(quadraticLatent, 3.0 * linearLatent)
+        << "linear " << linearLatent << " W/m², quadratic " << quadraticLatent;
+
+    // At 1 m/s the two forms agree, since U and U² are both 1 there — which is
+    // what makes the exponent a genuine shape change rather than a scale factor.
+    Meteorology calm = linear;
+    calm.windSpeed = 1.0;
+
+    Meteorology calmQuadratic = calm;
+    calmQuadratic.windExponent = 2.0;
+
+    EXPECT_NEAR(surfaceHeatFlux(calm, 25.0).latent,
+                surfaceHeatFlux(calmQuadratic, 25.0).latent, 1.0e-12);
+}
+
+TEST(SolarRadiation, ComputedRadiationDrivesTheBudgetItIsMeantTo)
+{
+    // The reason this exists: CE-QUAL-W2 computes shortwave when SROC is off,
+    // which is how DeGray is configured — its meteorology file has no shortwave
+    // column. So the budget has to be drivable from date and latitude alone.
+    using FVQual::Hydro::clearSkySolarRadiation;
+
+    Meteorology weather = night();
+    weather.airTemperature = 28.0;
+    weather.dewPoint       = 20.0;
+
+    // Midsummer noon at DeGray's latitude.
+    weather.shortwave = clearSkySolarRadiation(172.5, 34.2, 0.0);
+
+    ASSERT_GT(weather.shortwave, 0.0);
+
+    const double warm = equilibriumTemperature(weather);
+
+    // The same weather at midnight has no sun at all.
+    weather.shortwave = clearSkySolarRadiation(172.0, 34.2, 0.0);
+
+    ASSERT_EQ(weather.shortwave, 0.0);
+
+    const double cool = equilibriumTemperature(weather);
+
+    EXPECT_GT(warm, cool + 5.0)
+        << "sunlit equilibrium " << warm << " against night " << cool;
+}

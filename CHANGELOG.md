@@ -680,6 +680,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   curve, not about indexing. The prism mesh the same geometry would have
   produced is **2.40x** too large.
 
+### Added — Phase 3 (F3.6, computed solar radiation)
+
+- `clearSkySolarRadiation()` and `solarPosition()`: solar declination, hour
+  angle and elevation, extraterrestrial irradiance modulated by orbital
+  eccentricity, an air-mass transmittance, and a cloud reduction.
+- **Needed because CE-QUAL-W2 computes shortwave rather than reading it** when
+  its `SROC` switch is off, which is how DeGray is configured — its meteorology
+  file has `JDAY, TAIR, TDEW, WIND, PHI, CLOUD` and no shortwave column at all.
+  A heat budget drivable only by a measured record cannot run that model.
+- The evaporative wind function generalises from `a + bU` to `a + bU^c`, because
+  calibrated wind functions are routinely quadratic — DeGray's is
+  `9.2 + 0.46 W²` — and a linear form cannot follow one at both low and high
+  wind. At 8 m/s the quadratic term is six times the constant.
+- Gates use the exact reference values solar geometry has: declination at the
+  solstices and equinoxes, twelve-hour days at the equator all year, polar day
+  and night above the Arctic circle, symmetry about solar noon, and a clear
+  midsummer daily total of 20-40 MJ/m² at DeGray's latitude.
+
 ### Known limitations
 
 - An open boundary cannot do selective withdrawal, and its inflow composition is

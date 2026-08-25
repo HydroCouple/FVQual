@@ -88,14 +88,20 @@ struct FVQual_EXPORT Meteorology
     /*!
      * \brief Wind function coefficients for the latent heat flux.
      *
-     * `f(U) = evaporationA + evaporationB * U`, in W/(m²·Pa), so that the
-     * latent flux is `f(U) * (e_s(T_s) - e_a)`. The defaults are a
-     * Ryan-Harleman-style fit in SI; they are exposed because the wind function
-     * is the least universal part of any heat budget and is routinely
-     * recalibrated per site.
+     * `f(U) = evaporationA + evaporationB * U^windExponent`, in W/(m²·Pa), so
+     * that the latent flux is `f(U) * (e_s(T_s) - e_a)`.
+     *
+     * The exponent exists because calibrated wind functions are routinely
+     * quadratic — CE-QUAL-W2's DeGray application uses `9.2 + 0.46 W²` — and a
+     * linear form cannot represent one at both low and high wind. The defaults
+     * here are a Ryan-Harleman-style linear fit in SI.
+     *
+     * This is the least universal part of any heat budget and the first thing
+     * recalibrated per site, which is why all three are exposed.
      */
     double evaporationA = 3.0e-3;
     double evaporationB = 1.8e-3;
+    double windExponent = 1.0;
 
     /*!
      * \brief Psychrometric constant (Pa/K) at standard pressure.
@@ -174,6 +180,57 @@ struct FVQual_EXPORT HeatFluxTerms
  */
 [[nodiscard]] FVQual_EXPORT double equilibriumTemperature(
     const Meteorology &weather) noexcept;
+
+/*!
+ * \brief Where the sun is, for a place and an instant.
+ */
+struct FVQual_EXPORT SolarPosition
+{
+    double declination = 0.0; //!< Solar declination (radians).
+    double hourAngle   = 0.0; //!< Hour angle, zero at solar noon (radians).
+    double elevation   = 0.0; //!< Elevation above the horizon (radians), <0 at night.
+};
+
+/*!
+ * \brief Solar position for a Julian day of year and a location.
+ *
+ * \param[in] julianDay Day of year with a fractional part, 1.0 at midnight on
+ *                      1 January. Local time, not UTC — a reservoir model runs
+ *                      on the clock its meteorology was recorded in.
+ * \param[in] latitude  Degrees north.
+ */
+[[nodiscard]] FVQual_EXPORT SolarPosition solarPosition(double julianDay,
+                                                        double latitude) noexcept;
+
+/*!
+ * \brief Shortwave irradiance on a horizontal surface (W/m²).
+ *
+ * Needed because CE-QUAL-W2 computes rather than reads solar radiation when its
+ * `SROC` switch is off, which is how the DeGray application is configured — its
+ * meteorology file has no shortwave column at all. A heat budget that can only
+ * be driven by measured radiation cannot run that model.
+ *
+ * Extraterrestrial irradiance is reduced by an air-mass transmittance and then
+ * by cloud. Clear-sky transmittance follows the usual `0.7^(m^0.678)` form; the
+ * cloud reduction is `1 - 0.65 C²`, which is what W2 uses. Both are empirical
+ * fits, and neither is a substitute for a measured record where one exists.
+ *
+ * \param[in] julianDay  Day of year with a fractional part.
+ * \param[in] latitude   Degrees north.
+ * \param[in] cloudCover Fraction of sky covered, 0 to 1.
+ */
+[[nodiscard]] FVQual_EXPORT double clearSkySolarRadiation(double julianDay,
+                                                          double latitude,
+                                                          double cloudCover) noexcept;
+
+/*!
+ * \brief Hours between sunrise and sunset at a latitude and day of year.
+ *
+ * Exposed because it is the cleanest check on the solar geometry: twelve hours
+ * at the equator all year, and the polar day and night at high latitude.
+ */
+[[nodiscard]] FVQual_EXPORT double dayLength(double julianDay,
+                                             double latitude) noexcept;
 
 } // namespace FVQual::Hydro
 
