@@ -179,6 +179,26 @@ public:
     void clearBodyAcceleration() noexcept;
 
     /*!
+     * \brief Sets surface wind stress per column (Pa), overriding the scalar
+     *        `BarotropicOptions::windStressX/Y`.
+     *
+     * Acts on the surface, so it does **not** scale with depth — which is the
+     * whole reason it is separate from setBodyAcceleration(). Folding a surface
+     * stress into the body force as `tau/(rho H)` and letting the solver
+     * multiply it back by depth is not equivalent: the body acceleration is
+     * fixed for an internal step while `h` evolves through the subcycle, so the
+     * applied stress becomes `tau h/(rho H0)`. A column gaining depth then gains
+     * stress, which is a positive feedback. DeGray drained a column to its bed
+     * under the year's strongest wind that way.
+     */
+    [[nodiscard]] bool setWindStress(std::span<const double> taux,
+                                     std::span<const double> tauy,
+                                     std::string &message);
+
+    //! Clears any per-column wind stress, restoring the scalar options.
+    void clearWindStress() noexcept;
+
+    /*!
      * \brief Sets a volumetric source per column (m³/s), positive adding water.
      *
      * This is how inflows and withdrawals reach the free surface. The internal
@@ -537,6 +557,9 @@ private:
     // Depth-distributed body acceleration (m/s²), empty when unused.
     std::vector<double> m_bodyAccelerationX;
     std::vector<double> m_bodyAccelerationY;
+
+    std::vector<double> m_windStressX;
+    std::vector<double> m_windStressY;
 
     // Volumetric source per column (m³/s), empty when unused.
     std::vector<double> m_columnSource;

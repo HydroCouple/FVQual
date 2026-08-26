@@ -1633,31 +1633,20 @@ bool InternalModeSolver::step(double dt, std::string &message)
             m_columnAccelerationX[static_cast<size_t>(c)] = sumX / depth;
             m_columnAccelerationY[static_cast<size_t>(c)] = sumY / depth;
 
-            // Wind stress belongs to *both* modes. The internal mode applies it
-            // to the surface layer; the depth-averaged share has to reach the
-            // external mode too, or the two disagree about the column's momentum
-            // and mode adjustment fights the difference rather than reconciling
-            // it. That is Phase 3's bug 2 in a different term, and it showed up
-            // the same way: DeGray dried a column on day 96 the first time wind
-            // was wired into one mode only.
-            //
-            // The barotropic solver multiplies this by the water depth, so
-            // tau/(rho*H) contributes exactly tau/rho of depth-integrated
-            // momentum — the surface stress, no more.
-            if (!m_windStressX.empty())
-            {
-                const double scale = m_options.referenceDensity * depth;
-
-                m_columnAccelerationX[static_cast<size_t>(c)] +=
-                    m_windStressX[static_cast<size_t>(c)] / scale;
-                m_columnAccelerationY[static_cast<size_t>(c)] +=
-                    m_windStressY[static_cast<size_t>(c)] / scale;
-            }
         }
     }
 
     if (!m_external.setBodyAcceleration(m_columnAccelerationX, m_columnAccelerationY,
                                         message))
+    {
+        return false;
+    }
+
+    // Wind reaches the external mode as a surface stress, not folded into the
+    // body force. See BarotropicSolver::setWindStress for why the two are not
+    // interchangeable.
+    if (!m_windStressX.empty() &&
+        !m_external.setWindStress(m_windStressX, m_windStressY, message))
     {
         return false;
     }

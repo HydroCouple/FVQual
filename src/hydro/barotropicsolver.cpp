@@ -317,6 +317,30 @@ void BarotropicSolver::clearBodyAcceleration() noexcept
     m_bodyAccelerationY.clear();
 }
 
+bool BarotropicSolver::setWindStress(std::span<const double> taux,
+                                     std::span<const double> tauy,
+                                     std::string &message)
+{
+    if (static_cast<int64_t>(taux.size()) != m_columnCount ||
+        static_cast<int64_t>(tauy.size()) != m_columnCount)
+    {
+        message = "wind stress arrays must have one entry per column";
+        return false;
+    }
+
+    m_windStressX.assign(taux.begin(), taux.end());
+    m_windStressY.assign(tauy.begin(), tauy.end());
+
+    message.clear();
+    return true;
+}
+
+void BarotropicSolver::clearWindStress() noexcept
+{
+    m_windStressX.clear();
+    m_windStressY.clear();
+}
+
 int BarotropicSolver::addBoundary(const BoundaryCondition &condition,
                                   std::span<const int64_t> edges, std::string &message)
 {
@@ -996,7 +1020,9 @@ void BarotropicSolver::applySourceTerms(double dt)
     const double windAccelerationX = m_options.windStressX / m_options.waterDensity;
     const double windAccelerationY = m_options.windStressY / m_options.waterDensity;
 
-    const bool wind = windAccelerationX != 0.0 || windAccelerationY != 0.0;
+    const bool perColumnWind = !m_windStressX.empty();
+    const bool wind = perColumnWind || windAccelerationX != 0.0 ||
+                      windAccelerationY != 0.0;
     const bool body = !m_bodyAccelerationX.empty();
 
     FVQual_PARALLEL_FOR
@@ -1013,8 +1039,16 @@ void BarotropicSolver::applySourceTerms(double dt)
 
         if (wind)
         {
-            m_hu[i] += dt * windAccelerationX;
-            m_hv[i] += dt * windAccelerationY;
+            // Surface stress: independent of depth, by definition.
+            const double ax = perColumnWind
+                                  ? m_windStressX[i] / m_options.waterDensity
+                                  : windAccelerationX;
+            const double ay = perColumnWind
+                                  ? m_windStressY[i] / m_options.waterDensity
+                                  : windAccelerationY;
+
+            m_hu[i] += dt * ax;
+            m_hv[i] += dt * ay;
         }
 
         if (body)
