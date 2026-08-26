@@ -86,7 +86,7 @@ struct FVQual_EXPORT TurbulenceOptions
     double minDiffusivity  = 1.0e-7;
 
     //! Ceiling, so a bad step cannot produce an absurd diffusivity.
-    double maxViscosity = 1.0;
+    double maxViscosity = 0.1;
 
     //! Bed roughness length (m), for the bottom wall condition.
     double bedRoughness = 0.005;

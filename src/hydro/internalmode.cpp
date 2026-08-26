@@ -206,6 +206,16 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     // is compiled, which puts an ordering trap in the API: the natural thing is
     // to set self-shading coefficients before compiling, and that would then
     // write into a field that does not exist yet.
+    m_turbulence.initialize(mesh.columnCount(), mesh.layerCount());
+
+    {
+        const size_t interfaces = static_cast<size_t>(mesh.layerCount() + 1);
+        const size_t threads    = static_cast<size_t>(maxThreads());
+
+        m_shearSquared.assign(interfaces * threads, 0.0);
+        m_buoyancyFrequency.assign(interfaces * threads, 0.0);
+    }
+
     m_light.initialize(mesh, species);
     m_solar.initialize(mesh, species);
     m_settling.initialize(species);
@@ -262,7 +272,7 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
         });
 
     updateDensity();
-    updateVerticalMixing();
+    updateVerticalMixing(0.0);
 
     m_diagnostics             = InternalModeDiagnostics{};
     m_diagnostics.totalVolume = mesh.totalVolume();
@@ -291,13 +301,99 @@ void InternalModeSolver::updateDensity()
     }
 }
 
-void InternalModeSolver::updateVerticalMixing()
+void InternalModeSolver::updateVerticalMixing(double dt)
 {
     const Mesh::LayeredMesh  &mesh  = *m_mesh;
     const State::StateStore  &state = *m_state;
 
     const int64_t columns = mesh.columnCount();
     const int     layers  = mesh.layerCount();
+
+    // ── k-epsilon closure (F5.4) ──────────────────────────────────────────
+    //
+    // `dt > 0` also selects the Richardson path during initialize(), which has
+    // no step to advance over: the closure needs a seed, and Ri damping is a
+    // reasonable one.
+    if (m_options.useTurbulenceClosure && dt > 0.0)
+    {
+        const int interfaces = layers + 1;
+
+        const std::vector<double> &thickness = mesh.thickness();
+
+        FVQual_PARALLEL_FOR
+        for (int64_t c = 0; c < columns; ++c)
+        {
+            const size_t slot = static_cast<size_t>(threadIndex() * interfaces);
+
+            double *shearSquared = m_shearSquared.data() + slot;
+            double *buoyancy     = m_buoyancyFrequency.data() + slot;
+
+            // Surface and bed interfaces carry no interior gradient; the walls
+            // enter through the friction velocities instead.
+            shearSquared[0] = 0.0;
+            buoyancy[0]     = 0.0;
+            shearSquared[layers] = 0.0;
+            buoyancy[layers]     = 0.0;
+
+            for (int k = 1; k < layers; ++k)
+            {
+                const size_t above = static_cast<size_t>(mesh.cell(c, k - 1));
+                const size_t below = static_cast<size_t>(mesh.cell(c, k));
+
+                const double spacing =
+                    0.5 * (thickness[above] + thickness[below]);
+
+                if (spacing <= 0.0)
+                {
+                    shearSquared[k] = 0.0;
+                    buoyancy[k]     = 0.0;
+                    continue;
+                }
+
+                buoyancy[k] = m_options.gravity / m_options.referenceDensity *
+                              (state.density[below] - state.density[above]) / spacing;
+
+                const double shearU = (state.u[above] - state.u[below]) / spacing;
+                const double shearV = (state.v[above] - state.v[below]) / spacing;
+
+                shearSquared[k] = shearU * shearU + shearV * shearV;
+            }
+
+            // Friction velocities close the closure at both walls. The surface
+            // one is the wind stress F3.7 derives; the bed one is the quadratic
+            // drag the momentum solve already applies, so the two schemes cannot
+            // disagree about how rough the bed is.
+            double surfaceStress = 0.0;
+
+            if (!m_windStressX.empty())
+            {
+                surfaceStress = std::hypot(m_windStressX[static_cast<size_t>(c)],
+                                           m_windStressY[static_cast<size_t>(c)]);
+            }
+
+            const double frictionSurface =
+                std::sqrt(surfaceStress / m_options.referenceDensity);
+
+            const size_t bottom = static_cast<size_t>(mesh.cell(c, layers - 1));
+
+            const double frictionBed =
+                std::sqrt(bottomDragCoefficient(c)) *
+                std::hypot(state.u[bottom], state.v[bottom]);
+
+            const size_t first = static_cast<size_t>(mesh.interfaceSlot(c, 0));
+
+            m_turbulence.advanceColumn(
+                c, dt, &thickness[static_cast<size_t>(mesh.cell(c, 0))],
+                shearSquared, buoyancy, frictionSurface, frictionBed,
+                &m_km[first], &m_kz[first]);
+        }
+
+        // The closure carries its own memory, so there is no Richardson number
+        // to report. Left at zero rather than stale.
+        m_diagnostics.maxRichardson = 0.0;
+
+        return;
+    }
 
     // Accumulated into a local so the threaded loop below does not
     // read-modify-write a shared field. It is only a diagnostic, but a racing
@@ -1493,7 +1589,7 @@ bool InternalModeSolver::step(double dt, std::string &message)
     {
         ScopedTimer timer(m_profile.density);
         updateDensity();
-        updateVerticalMixing();
+        updateVerticalMixing(dt);
     }
 
     {

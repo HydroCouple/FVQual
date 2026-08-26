@@ -143,6 +143,12 @@ int main(int argc, char **argv)
     // a wall clock is enforced.
     const double endDay = argc > 3 ? std::atof(argv[3]) : kEndDay;
 
+    // Optional fourth argument, "kepsilon", switches vertical mixing from
+    // Richardson damping to the two-equation closure (F5.4). A switch rather
+    // than a rebuild, because the only way to know which is better on this
+    // reservoir is to run both against the same measurements.
+    const bool closure = argc > 4 && std::string(argv[4]) == "kepsilon";
+
     std::string message;
 
     // ── Geometry ──────────────────────────────────────────────────────────
@@ -225,6 +231,8 @@ int main(int argc, char **argv)
         }
     }
 
+    std::printf("mixing: %s\n", closure ? "k-epsilon closure" : "Richardson damping");
+
     std::printf("DeGray: %lld columns x %d layers, surface %.2f m, volume %.4g m3, "
                 "area %.4g m2\n",
                 static_cast<long long>(layered.columnCount()), kLayers, startSurface,
@@ -294,6 +302,8 @@ int main(int argc, char **argv)
     options.manningN  = 0.03;
     options.cflNumber = 0.5;
     options.maxTimeStep = 300.0;
+    options.useTurbulenceClosure = closure;
+    const bool nowind = argc > 5 && std::string(argv[5]) == "nowind";
 
     if (!solver.initialize(layered, state, registry, options, message))
     {
@@ -305,6 +315,7 @@ int main(int argc, char **argv)
     // card: 9.2 + 0.46 W^2 in W2's units. The coefficients here are in SI, so
     // only the shape carries over.
     solver.meteorology().base.windExponent = 2.0;
+    if (nowind) solver.meteorology().base.dragCoefficient = 0.0;
     solver.enableMeteorology(/*attenuation=*/0.45);
 
     // Inflow at the head of the reservoir, density-placed so a cold tributary

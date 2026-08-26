@@ -57,6 +57,7 @@
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/barotropicsolver.h"
 #include "fvqual/hydro/heatbudget.h"
+#include "fvqual/hydro/turbulence.h"
 #include "fvqual/hydro/pressureclosure.h"
 #include "fvqual/kinetics/lightfield.h"
 #include "fvqual/kinetics/reactionnetwork.h"
@@ -112,6 +113,21 @@ struct FVQual_EXPORT InternalModeOptions
      *        convective adjustment.
      */
     double convectiveMixing = 1.0e-1;
+
+    /*!
+     * \brief Use the two-equation k-epsilon closure instead of Richardson
+     *        damping (F5.4).
+     *
+     * Off by default: Richardson damping is what every gate through Phase 3 was
+     * written against, and a closure that changes every mixing coefficient in
+     * the model should be opted into and measured, not switched on under
+     * existing results.
+     *
+     * Measured on DeGray, Richardson damping has no setting between off and
+     * overwhelming — see `turbulence.h`. This is the fix for that, and it is
+     * only worth defaulting on once it beats both.
+     */
+    bool useTurbulenceClosure = false;
 
     // ── Horizontal mixing ─────────────────────────────────────────────────
 
@@ -566,7 +582,7 @@ public:
     [[nodiscard]] double totalSpeciesMass(int species) const;
 
 private:
-    void   updateVerticalMixing();
+    void   updateVerticalMixing(double dt);
     void   advanceMomentum(double dt);
     void   applyModeAdjustment();
     void   computeLayerFluxes();
@@ -614,6 +630,7 @@ private:
     Kinetics::ReactionNetwork         m_reactions;
     Kinetics::LightField              m_light;
     Kinetics::LightField              m_solar;
+    TurbulenceClosure                 m_turbulence;
     Forcing::MeteorologyField         m_meteorology;
     bool                              m_useMeteorology   = false;
     double                            m_solarAttenuation = 0.45;
@@ -633,6 +650,10 @@ private:
      */
     std::vector<double> m_windStressX;
     std::vector<double> m_windStressY;
+
+    //! Per-thread scratch for the closure's per-interface inputs.
+    std::vector<double> m_shearSquared;
+    std::vector<double> m_buoyancyFrequency;
     Kinetics::LightOptions            m_lightOptions;
     StepProfile                       m_profile;
     std::unique_ptr<IPressureClosure> m_pressure;
