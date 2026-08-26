@@ -400,6 +400,25 @@ int main(int argc, char **argv)
     int64_t steps       = 0;
     bool    warnedFloor = false;
 
+    // Per-internal-step trace of one column, for the window around a failure.
+    // Written as CSV rather than printed, so it can be read and plotted after
+    // the fact. FVQUAL_TRACE_COLUMN selects the column; the window is the day
+    // either side of DeGray's peak wind at 96.75.
+    const char *traceColumn = std::getenv("FVQUAL_TRACE_COLUMN");
+
+    const int64_t traced = traceColumn ? std::atol(traceColumn) : -1;
+
+    std::ofstream trace;
+
+    if (traced >= 0)
+    {
+        trace.open(outputs + "/degray_trace.csv");
+        trace << "jday,dt,eta,depth,u,v,ext_dt,ext_requested_dt,ext_steps,"
+                 "ext_max_courant,ext_clamped,eta_left,eta_right,wind,"
+                 "mesh_eta,mesh_thick_top,mesh_thick_bot,min_thick_anywhere\n";
+        trace.precision(9);
+    }
+
     while (day < endDay)
     {
         FVQual::Forcing::MeteorologyField &weather = solver.meteorology();
@@ -462,6 +481,43 @@ int main(int argc, char **argv)
         // narrowest segment tapers to 0.8% of its surface width at the bed, so
         // the storage-limited step for that column falls below the floor and the
         // solver clamps up to it — taking a step the condition forbids.
+        if (traced >= 0 && day > 96.0 && day < 97.2)
+        {
+            const auto  &ext = solver.external();
+            const size_t i   = static_cast<size_t>(traced);
+
+            const auto &eta = ext.surfaceElevation();
+
+            trace << day << ',' << dt << ',' << eta[i] << ','
+                  << ext.depth()[i] << ',' << ext.velocityX()[i] << ','
+                  << ext.velocityY()[i] << ',' << ext.diagnostics().timeStep << ','
+                  << ext.diagnostics().requestedTimeStep << ','
+                  << ext.diagnostics().steps << ','
+                  << ext.diagnostics().maxCourant << ','
+                  << ext.diagnostics().clampedSteps << ','
+                  << (traced > 0 ? eta[i - 1] : eta[i]) << ','
+                  << (traced + 1 < layered.columnCount() ? eta[i + 1] : eta[i]) << ','
+                  << weather.windSpeed.at(0) << ',';
+
+            // The mesh's own view of the same column, and the thinnest layer
+            // anywhere: the internal step is limited by thickness/|w|, so a
+            // vanishing layer in *any* column collapses it globally.
+            double thinnest = 1.0e30;
+
+            for (int64_t cc = 0; cc < layered.columnCount(); ++cc)
+                for (int k = 0; k < kLayers; ++k)
+                    thinnest = std::min(
+                        thinnest,
+                        layered.thickness()[static_cast<size_t>(layered.cell(cc, k))]);
+
+            trace << layered.surfaceElevation()[i] << ','
+                  << layered.thickness()[static_cast<size_t>(layered.cell(traced, 0))]
+                  << ','
+                  << layered.thickness()[static_cast<size_t>(
+                         layered.cell(traced, kLayers - 1))]
+                  << ',' << thinnest << '\n';
+        }
+
         if (solver.external().timeStepFloorWasBinding() && !warnedFloor)
         {
             std::cerr << "warning: the barotropic time-step floor bound at day "
