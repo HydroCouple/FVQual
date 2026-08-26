@@ -67,6 +67,20 @@ struct FVQual_EXPORT LightOptions
     double incidentShortwave = 0.0;
 
     /*!
+     * \brief Optional per-column incident irradiance (W/m²); overrides
+     *        \ref incidentShortwave when non-null (F3.7).
+     *
+     * A pointer to caller-owned storage rather than a vector member, because
+     * `LightOptions` is constructed afresh every step and owning a per-column
+     * array would allocate in the hot path once per step. The pointee must
+     * outlive the `update()` call and hold one value per column.
+     *
+     * Null keeps the scalar path exactly — same operations, same values — so
+     * the energy-budget gates that predate this remain meaningful.
+     */
+    const std::vector<double> *incidentPerColumn = nullptr;
+
+    /*!
      * \brief Fraction absorbed at the surface and unavailable below (-).
      *
      * CE-QUAL-W2's BETA. The default 0.45 is its usual value: roughly the

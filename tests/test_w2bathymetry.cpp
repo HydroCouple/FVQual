@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
 #include <string>
 
 using FVQual::IO::W2Bathymetry;
@@ -49,16 +50,42 @@ using FVQual::Mesh::SigmaSpec;
 
 namespace {
 
-//! Path to DeGray's bathymetry as it ships with CE-QUAL-W2 V5.
-const char *kDeGray =
-    "/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/InputFiles/bth1.csv";
+/*!
+ * \brief Path to DeGray's bathymetry as it ships with CE-QUAL-W2 V5.
+ *
+ * Set `FVQUAL_DEGRAY_DIR` to the example's `InputFiles` directory to point the
+ * real-data gates at a local checkout. The compiled-in default is only a
+ * convenience for the machine this was first written on.
+ *
+ * These gates skip when the file is absent, which is the right behaviour for a
+ * suite that must pass without a third-party dataset — and also a trap: a
+ * hard-coded path that stops existing turns the gates with the most teeth into
+ * three silent skips inside a run that still reports 100%. A skip is not a
+ * pass, and the summary does not distinguish them.
+ */
+[[nodiscard]] std::string deGrayDir()
+{
+    if (const char *root = std::getenv("FVQUAL_DEGRAY_DIR"))
+        return std::string(root);
+
+    return "/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/InputFiles";
+}
+
+//! One file from that directory. Every DeGray path in this file goes through
+//! here, so the dataset moves in one place rather than in six.
+[[nodiscard]] std::string deGrayFile(const std::string &name)
+{
+    return deGrayDir() + "/" + name;
+}
+
+[[nodiscard]] std::string deGrayPath() { return deGrayFile("bth1.csv"); }
 
 //! EBOT for DeGray's water body, from the control file's location card.
 constexpr double kDeGrayBottom = 66.35;
 
 [[nodiscard]] bool haveDeGray()
 {
-    std::ifstream probe(kDeGray);
+    std::ifstream probe(deGrayPath());
     return probe.good();
 }
 
@@ -234,12 +261,13 @@ TEST(W2Bathymetry, MalformedFilesAreRefusedWithALineNumber)
 TEST(W2Bathymetry, DeGrayReadsWithItsPublishedDimensions)
 {
     if (!haveDeGray())
-        GTEST_SKIP() << "DeGray bathymetry not available at " << kDeGray;
+        GTEST_SKIP() << "DeGray bathymetry not available at " << deGrayPath()
+                     << " (set FVQUAL_DEGRAY_DIR to the example's InputFiles)";
 
     W2Bathymetry bathymetry;
     std::string  message;
 
-    ASSERT_TRUE(bathymetry.read(kDeGray, kDeGrayBottom, message)) << message;
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
 
     // IMX and KMX from the control file.
     EXPECT_EQ(bathymetry.segmentCount(), 32);
@@ -266,7 +294,7 @@ TEST(W2Bathymetry, DeGrayHoldsTheWaterItIsKnownToHold)
     W2Bathymetry bathymetry;
     std::string  message;
 
-    ASSERT_TRUE(bathymetry.read(kDeGray, kDeGrayBottom, message)) << message;
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
 
     const double volume = bathymetry.volumeAt(123.8);
     const double area   = bathymetry.surfaceAreaAt(123.8);
@@ -308,7 +336,7 @@ TEST(W2Bathymetry, TheDeGrayMeshReproducesTheBathymetrysVolume)
     W2Bathymetry bathymetry;
     std::string  message;
 
-    ASSERT_TRUE(bathymetry.read(kDeGray, kDeGrayBottom, message)) << message;
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
 
     HydroCouple::SDK::IO::MeshDefinition definition;
     std::vector<double>                  bed;
@@ -373,10 +401,7 @@ TEST(W2TimeSeries, AMeteorologyRecordReadsAndInterpolates)
     FVQual::IO::W2TimeSeries met;
     std::string              message;
 
-    ASSERT_TRUE(met.read("/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/"
-                         "InputFiles/met.npt",
-                         message))
-        << message;
+    ASSERT_TRUE(met.read(deGrayFile("met.npt"), message)) << message;
 
     // JDAY TAIR TDEW WIND PHI CLOUD, so five data columns.
     ASSERT_EQ(met.columnCount(), 5);
@@ -422,8 +447,7 @@ TEST(W2TimeSeries, InflowAndOutflowRecordsRead)
 {
     if (!haveDeGray()) GTEST_SKIP();
 
-    const std::string base =
-        "/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/InputFiles/";
+    const std::string base = deGrayDir() + "/";
 
     FVQual::IO::W2TimeSeries inflow, inflowTemperature, outflow;
     std::string              message;
@@ -470,10 +494,7 @@ TEST(W2VerticalProfile, TheInitialProfileConfirmsTheVerticalDatum)
     FVQual::IO::W2VerticalProfile profile;
     std::string                   message;
 
-    ASSERT_TRUE(profile.read("/sessions/festive-sharp-feynman/mnt/v5/Examples/DeGray/"
-                             "InputFiles/vpr.npt",
-                             message))
-        << message;
+    ASSERT_TRUE(profile.read(deGrayFile("vpr.npt"), message)) << message;
 
     const std::vector<double> &temperature = profile.profile("TEMP");
 
@@ -484,7 +505,7 @@ TEST(W2VerticalProfile, TheInitialProfileConfirmsTheVerticalDatum)
     // leaves exactly 28 layers wetted — and the profile carries exactly 28
     // values. A datum wrong by even one layer would not line up.
     W2Bathymetry bathymetry;
-    ASSERT_TRUE(bathymetry.read(kDeGray, kDeGrayBottom, message)) << message;
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
 
     // Counting layers that are both below the surface *and* carry width. W2
     // pads the grid with zero-width boundary layers at the top and bottom —

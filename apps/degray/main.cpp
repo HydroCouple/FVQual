@@ -58,6 +58,9 @@ constexpr double kEndDay          = 358.7;
 //! Layers in the sigma grid. Enough to resolve a thermocline in 57 m.
 constexpr int kLayers = 30;
 
+//! For the wind-direction convention change; see the conversion at its use.
+constexpr double kHalfPi = 0.5 * 3.14159265358979323846;
+
 /*!
  * \brief Interpolates a W2 vertical profile, surface first, to an elevation.
  */
@@ -274,6 +277,7 @@ int main(int argc, char **argv)
     const int dew   = met.columnIndex("TDEW");
     const int wind  = met.columnIndex("WIND");
     const int cloud = met.columnIndex("CLOUD");
+    const int phi   = met.columnIndex("PHI");
 
     // ── Solver ────────────────────────────────────────────────────────────
 
@@ -294,7 +298,7 @@ int main(int argc, char **argv)
     // DeGray's calibrated wind function, from the control file's heat-exchange
     // card: 9.2 + 0.46 W^2 in W2's units. The coefficients here are in SI, so
     // only the shape carries over.
-    solver.meteorology().windExponent = 2.0;
+    solver.meteorology().base.windExponent = 2.0;
     solver.enableMeteorology(/*attenuation=*/0.45);
 
     // Inflow at the head of the reservoir, density-placed so a cold tributary
@@ -346,18 +350,33 @@ int main(int argc, char **argv)
 
     while (day < kEndDay)
     {
-        FVQual::Hydro::Meteorology &weather = solver.meteorology();
+        FVQual::Forcing::MeteorologyField &weather = solver.meteorology();
 
-        weather.airTemperature = met.valueAt(day, air);
-        weather.dewPoint       = met.valueAt(day, dew);
-        weather.windSpeed      = met.valueAt(day, wind);
+        weather.airTemperature.setUniform(met.valueAt(day, air));
+        weather.dewPoint.setUniform(met.valueAt(day, dew));
+        weather.windSpeed.setUniform(met.valueAt(day, wind));
+
+        // W2's PHI is a compass angle, clockwise from north, and W2 projects the
+        // stress onto each segment as `cos(PHI - PHI0)` (`w2_4_win.f90:543`).
+        // `W2Bathymetry` lays the chain out with the along-channel unit vector
+        // `(sin PHI0, cos PHI0)`, so a compass angle maps into FVQual's frame as
+        // `pi/2 - angle`. Applying that to PHI puts the wind vector at
+        // `(sin PHI, cos PHI)` — the same frame the orientations are in — and
+        // FVQual's own projection onto a face then reproduces `cos(PHI - PHI0)`
+        // identically, without this code needing to decide whether PHI is a
+        // "from" or a "towards" bearing. Matching the reference beats guessing
+        // the convention.
+        weather.windDirection.setUniform(kHalfPi - met.valueAt(day, phi));
+
         // W2 records cloud cover in tenths, on a 0-10 scale; Meteorology wants a
         // fraction. Converting here rather than in the reader keeps the reader
         // a faithful record of the file, and puts the unit change at the
         // boundary where the two conventions actually meet.
-        weather.cloudCover = met.valueAt(day, cloud) / 10.0;
-        weather.shortwave =
-            FVQual::Hydro::clearSkySolarRadiation(day, kLatitude, weather.cloudCover);
+        const double cover = met.valueAt(day, cloud) / 10.0;
+
+        weather.cloudCover.setUniform(cover);
+        weather.shortwave.setUniform(
+            FVQual::Hydro::clearSkySolarRadiation(day, kLatitude, cover));
 
         if (!solver.sources().setDischarge(inflowIndex, inflow.valueAt(day, 0), message) ||
             !solver.sources().setDischarge(outflowIndex, -outflow.valueAt(day, 0),
@@ -435,11 +454,17 @@ int main(int argc, char **argv)
                     layered.cellVolume()[static_cast<size_t>(cell)] * capacity;
         }
 
+        // The reported weather is the weather at the column being reported from,
+        // now that forcing may vary along the reservoir. Uniform here, so these
+        // are the same numbers the scalar path wrote — but reading them from the
+        // field keeps the report honest if the forcing is ever made spatial.
+        const FVQual::Hydro::Meteorology reported = weather.at(deep);
+
         daily << day << ',' << surfaceT << ',' << bottomT << ',' << thermocline << ','
               << layered.surfaceElevation()[static_cast<size_t>(deep)] << ','
               << layered.totalVolume() << ',' << heat << ','
-              << FVQual::Hydro::equilibriumTemperature(weather) << ','
-              << weather.airTemperature << ',' << weather.shortwave << '\n';
+              << FVQual::Hydro::equilibriumTemperature(reported) << ','
+              << reported.airTemperature << ',' << reported.shortwave << '\n';
 
         for (int k = 0; k < kLayers; ++k)
         {

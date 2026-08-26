@@ -64,6 +64,21 @@ struct FVQual_EXPORT Meteorology
     double airTemperature = 20.0;  //!< Dry-bulb air temperature (deg C).
     double dewPoint       = 10.0;  //!< Dew-point temperature (deg C).
     double windSpeed      = 2.0;   //!< Wind speed at the reference height (m/s).
+
+    /*!
+     * \brief Direction the wind blows *towards* (radians, zero along +x,
+     *        increasing counter-clockwise).
+     *
+     * FVQual's own convention, stated because there are at least three in use
+     * and picking silently is how a reservoir ends up mixing along the wrong
+     * axis. Meteorological records overwhelmingly give the direction wind comes
+     * *from*, and CE-QUAL-W2's `PHI` is one of them — converting is the
+     * caller's job, at the boundary where the two conventions meet. That is the
+     * same rule cloud cover now follows, and for the same reason: the last time
+     * a unit convention was resolved anywhere but the boundary it cost a whole
+     * DeGray run.
+     */
+    double windDirection = 0.0;
     double cloudCover     = 0.0;   //!< Fraction of sky covered, 0 to 1.
     double shortwave      = 0.0;   //!< Incident shortwave irradiance (W/m²).
     double pressure       = 101325.0; //!< Atmospheric pressure (Pa).
@@ -120,7 +135,49 @@ struct FVQual_EXPORT Meteorology
      * the evaluation, so an alpine reservoir gets the right answer.
      */
     double psychrometric = 66.1;
+
+    /*!
+     * \brief Air density (kg/m³) and surface drag coefficient (-), for the
+     *        momentum the wind carries.
+     *
+     * Separate from the wind function above, which governs the *heat* the wind
+     * carries. Both are driven by `windSpeed`, and keeping them apart is what
+     * lets one be wired and the other forgotten — which is exactly what
+     * happened: the DeGray run set wind for the heat budget and left the
+     * momentum stress at zero, so wind evaporated water and moved none. See
+     * \ref windStress, which exists so that supplying wind supplies both.
+     */
+    double airDensity      = 1.225;
+    double dragCoefficient = 1.3e-3;
 };
+
+/*!
+ * \brief Surface wind stress components (Pa).
+ */
+struct FVQual_EXPORT WindStress
+{
+    double x = 0.0;
+    double y = 0.0;
+
+    //! Magnitude (Pa).
+    [[nodiscard]] double magnitude() const noexcept;
+};
+
+/*!
+ * \brief Wind stress from wind speed and direction, `tau = rho_a C_D W²`.
+ *
+ * Derived here rather than supplied by the caller alongside the wind speed,
+ * deliberately. A model that takes speed for its heat budget and stress for its
+ * momentum has two inputs describing one wind, and nothing checks that they
+ * agree — or that the second was set at all. Deriving it means specifying wind
+ * once reaches both consumers.
+ *
+ * The quadratic drag law with a constant coefficient is the standard first
+ * approximation. `dragCoefficient` is exposed because it is genuinely
+ * site-dependent — sheltered reservoirs are routinely calibrated well below the
+ * open-water value.
+ */
+[[nodiscard]] FVQual_EXPORT WindStress windStress(const Meteorology &weather) noexcept;
 
 /*!
  * \brief The individual terms of the surface exchange (W/m²), positive into

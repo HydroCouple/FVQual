@@ -1081,9 +1081,21 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
     // shortwave, so the irradiance it reports is energy still in transit. The
     // absorbed energy in a cell is then the difference across it, which is what
     // heats that cell — and is the identity LightField's own energy gate pins.
+    // Net shortwave per column, because albedo and incident radiation may both
+    // vary along the water body (F3.7). Filled into a member rather than a
+    // local so the per-step work does not allocate.
+    m_incidentShortwave.resize(static_cast<size_t>(mesh.columnCount()));
+
+    FVQual_PARALLEL_FOR
+    for (int64_t c = 0; c < mesh.columnCount(); ++c)
+    {
+        m_incidentShortwave[static_cast<size_t>(c)] =
+            (1.0 - m_meteorology.albedo.at(c)) * m_meteorology.shortwave.at(c);
+    }
+
     Kinetics::LightOptions solar;
-    solar.incidentShortwave = (1.0 - m_meteorology.albedo) * m_meteorology.shortwave;
-    solar.surfaceAbsorption = m_meteorology.surfaceAbsorption;
+    solar.incidentPerColumn     = &m_incidentShortwave;
+    solar.surfaceAbsorption     = m_meteorology.base.surfaceAbsorption;
     solar.backgroundAttenuation = m_solarAttenuation;
 
     m_solar.update(mesh, state, solar);
@@ -1098,7 +1110,7 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
         // The exchange depends on the surface temperature it is trying to set,
         // which is the feedback that gives a water body an equilibrium at all.
         const HeatFluxTerms terms =
-            surfaceHeatFlux(m_meteorology,
+            surfaceHeatFlux(m_meteorology.at(c),
                             state.speciesAt(m_temperatureIndex,
                                             static_cast<int64_t>(surface)));
 

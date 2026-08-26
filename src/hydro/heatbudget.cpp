@@ -100,6 +100,26 @@ HeatFluxTerms surfaceHeatFlux(const Meteorology &weather,
     return terms;
 }
 
+double WindStress::magnitude() const noexcept
+{
+    return std::sqrt(x * x + y * y);
+}
+
+WindStress windStress(const Meteorology &weather) noexcept
+{
+    WindStress stress;
+
+    const double speed = std::max(0.0, weather.windSpeed);
+
+    const double magnitude =
+        weather.airDensity * weather.dragCoefficient * speed * speed;
+
+    stress.x = magnitude * std::cos(weather.windDirection);
+    stress.y = magnitude * std::sin(weather.windDirection);
+
+    return stress;
+}
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;

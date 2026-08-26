@@ -73,15 +73,21 @@ void LightField::update(const Mesh::LayeredMesh &mesh, const State::StateStore &
 
     const std::vector<double> &thickness = mesh.thickness();
 
-    // What survives the surface, and what the surface kept.
-    const double penetrating =
-        options.incidentShortwave * (1.0 - options.surfaceAbsorption);
-    const double absorbed = options.incidentShortwave - penetrating;
-
     FVQual_PARALLEL_FOR
     for (int64_t c = 0; c < columns; ++c)
     {
-        m_surfaceAbsorbed[static_cast<size_t>(c)] = absorbed;
+        // What arrives at this column: one value for the whole mesh, or a
+        // per-column field where shading, cloud or a coupled atmosphere vary
+        // it. The scalar branch is the original arithmetic untouched.
+        const double incident =
+            options.incidentPerColumn != nullptr
+                ? (*options.incidentPerColumn)[static_cast<size_t>(c)]
+                : options.incidentShortwave;
+
+        // What survives the surface, and what the surface kept.
+        const double penetrating = incident * (1.0 - options.surfaceAbsorption);
+
+        m_surfaceAbsorbed[static_cast<size_t>(c)] = incident - penetrating;
 
         double irradiance = penetrating;
 

@@ -60,6 +60,7 @@
 #include "fvqual/hydro/pressureclosure.h"
 #include "fvqual/kinetics/lightfield.h"
 #include "fvqual/kinetics/reactionnetwork.h"
+#include "fvqual/forcing/forcingfield.h"
 #include "fvqual/forcing/sources.h"
 #include "fvqual/forcing/outletgroups.h"
 #include "fvqual/forcing/structures.h"
@@ -375,9 +376,16 @@ public:
      * Inert until enableMeteorology() is called, so an existing model keeps its
      * prescribed `InternalModeOptions::surfaceHeatFlux` and nothing changes
      * under it.
+     *
+     * Each variable is uniform or per column (F3.7). Assigning a `Meteorology`
+     * makes everything uniform, so `solver.meteorology() = weather;` still does
+     * what it always did.
      */
-    [[nodiscard]] Meteorology &meteorology() noexcept { return m_meteorology; }
-    [[nodiscard]] const Meteorology &meteorology() const noexcept
+    [[nodiscard]] Forcing::MeteorologyField &meteorology() noexcept
+    {
+        return m_meteorology;
+    }
+    [[nodiscard]] const Forcing::MeteorologyField &meteorology() const noexcept
     {
         return m_meteorology;
     }
@@ -606,9 +614,16 @@ private:
     Kinetics::ReactionNetwork         m_reactions;
     Kinetics::LightField              m_light;
     Kinetics::LightField              m_solar;
-    Meteorology                       m_meteorology;
+    Forcing::MeteorologyField         m_meteorology;
     bool                              m_useMeteorology   = false;
     double                            m_solarAttenuation = 0.45;
+
+    /*!
+     * \brief Per-column net shortwave handed to the solar LightField (W/m²).
+     *
+     * A member rather than a local so the per-step fill does not allocate.
+     */
+    std::vector<double> m_incidentShortwave;
     Kinetics::LightOptions            m_lightOptions;
     StepProfile                       m_profile;
     std::unique_ptr<IPressureClosure> m_pressure;
