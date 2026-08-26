@@ -521,6 +521,14 @@ double InternalModeSolver::stableTimeStep() const
     double limit = fastest > 0.0 ? m_options.cflNumber * spacing / fastest
                                  : m_options.maxTimeStep;
 
+    // Which constraint actually binds, and where. Chasing a collapsing step by
+    // tracing a column picked by guesswork wastes runs; the solver knows the
+    // answer and can simply say it.
+    m_diagnostics.limitingColumn = -1;
+    m_diagnostics.limitingLayer  = -1;
+    m_diagnostics.limitingSpeed  = fastest;
+    m_diagnostics.limitIsVertical = false;
+
     // Vertical advection has its own Courant limit, and it is usually the
     // binding one: sigma layers are metres thick where the horizontal cells
     // are tens of metres wide, so a vertical velocity a hundred times smaller
@@ -545,7 +553,19 @@ double InternalModeSolver::stableTimeStep() const
             const double speed = std::max(top, bottom);
 
             if (speed > 0.0)
-                limit = std::min(limit, m_options.cflNumber * thickness / speed);
+            {
+                const double candidate = m_options.cflNumber * thickness / speed;
+
+                if (candidate < limit)
+                {
+                    limit = candidate;
+
+                    m_diagnostics.limitingColumn  = c;
+                    m_diagnostics.limitingLayer   = k;
+                    m_diagnostics.limitingSpeed   = speed;
+                    m_diagnostics.limitIsVertical = true;
+                }
+            }
         }
     }
 

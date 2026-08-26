@@ -415,7 +415,8 @@ int main(int argc, char **argv)
         trace.open(outputs + "/degray_trace.csv");
         trace << "jday,dt,eta,depth,u,v,ext_dt,ext_requested_dt,ext_steps,"
                  "ext_max_courant,ext_clamped,eta_left,eta_right,wind,"
-                 "mesh_eta,mesh_thick_top,mesh_thick_bot,min_thick_anywhere\n";
+                 "mesh_eta,mesh_thick_top,mesh_thick_bot,min_thick_anywhere,"
+                 "limit_col,limit_layer,limit_speed,limit_vertical\n";
         trace.precision(9);
     }
 
@@ -515,7 +516,11 @@ int main(int argc, char **argv)
                   << ','
                   << layered.thickness()[static_cast<size_t>(
                          layered.cell(traced, kLayers - 1))]
-                  << ',' << thinnest << '\n';
+                  << ',' << thinnest << ','
+                  << solver.diagnostics().limitingColumn << ','
+                  << solver.diagnostics().limitingLayer << ','
+                  << solver.diagnostics().limitingSpeed << ','
+                  << (solver.diagnostics().limitIsVertical ? 1 : 0) << '\n';
         }
 
         if (solver.external().timeStepFloorWasBinding() && !warnedFloor)

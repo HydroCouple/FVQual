@@ -230,6 +230,18 @@ struct FVQual_EXPORT InternalModeDiagnostics
 
     double totalVolume    = 0.0; //!< Domain water volume (m³).
     double maxRichardson  = 0.0; //!< Largest gradient Richardson number.
+
+    /*!
+     * \brief Which constraint set the last stableTimeStep(), and where.
+     *
+     * `limitingColumn` is -1 when the horizontal constraint bound. A collapsing
+     * step is otherwise diagnosed by guessing a column and tracing it, which is
+     * slow and frequently wrong — the solver already knows.
+     */
+    int64_t limitingColumn  = -1;
+    int     limitingLayer   = -1;
+    double  limitingSpeed   = 0.0;
+    bool    limitIsVertical = false;
     int64_t externalSteps = 0;   //!< External substeps taken.
     int64_t steps         = 0;   //!< Internal steps taken by advance().
 };
@@ -620,7 +632,7 @@ private:
     const State::SpeciesRegistry *m_species = nullptr;
 
     InternalModeOptions               m_options;
-    InternalModeDiagnostics           m_diagnostics;
+    mutable InternalModeDiagnostics m_diagnostics;
     BarotropicSolver                  m_external;
     Transport::EulerianTransport      m_transport;
     Forcing::SourceSet                m_sources;
