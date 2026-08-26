@@ -797,3 +797,119 @@ TEST(InternalMode, RejectsAMismatchedStateStore)
     EXPECT_FALSE(solver.initialize(layered, state, registry, quietOptions(), message));
     EXPECT_FALSE(message.empty());
 }
+
+// ── Wind on a stratified, tapering reservoir (the DeGray failure) ──────────
+
+/*!
+ * \brief The gust that breaks DeGray, in a controlled coupled model.
+ *
+ * DeGray fails at day 96.75 and nowhere else. The met record there reads 3.4,
+ * **12.1**, 2.3, 0.0 m/s at three-hour spacing — one isolated gust, a 12.7-fold
+ * jump in stress and back within nine hours — and a shallow column drains to its
+ * bed. Which resolutions survive reshuffles when the formulation changes, so it
+ * is a knife edge rather than under-resolution.
+ *
+ * The barotropic solver is not the culprit: `Barotropic.WindSetupIsReachedFrom
+ * RestOverAShoalingBed` and `Barotropic.AnImpulsiveGustOverATaperingBasinDoes
+ * NotEmptyIt` put exactly this forcing on exactly this geometry — shoaling bed,
+ * storage curve tapering to a tenth of plan area, the same gust sequence through
+ * the same setWindStress path — and both pass.
+ *
+ * What those lack is stratification and the mode coupling. This adds them.
+ */
+TEST(InternalMode, AGustOverAStratifiedTaperingReservoirDoesNotDrainAColumn)
+{
+    constexpr int    kColumns = 24;
+    constexpr int    kLayers  = 20;
+    constexpr double kLength  = 6000.0;
+    constexpr double kDeep    = 30.0;
+    constexpr double kShallow = 5.0;
+
+    InternalModeOptions options = quietOptions();
+    options.manningN    = 0.03;
+    options.maxTimeStep = 300.0;
+
+    Model model;
+
+    ASSERT_NO_FATAL_FAILURE(model.build(
+        kColumns, kLayers, kLength, 300.0,
+        [](double x) {
+            const double f = x / kLength;
+            return -(kDeep + (kShallow - kDeep) * f);
+        },
+        stratifiedProfile, options));
+
+    // Storage tapering to a tenth of plan area at the bed — DeGray's shape, and
+    // the ingredient the constant-area gates cannot have.
+    {
+        std::string message;
+
+        for (int64_t c = 0; c < model.horizontal.faceCount(); ++c)
+        {
+            const size_t i   = static_cast<size_t>(c);
+            const double bed = model.horizontal.faceBed()[i];
+
+            std::vector<double> elevation;
+            std::vector<double> planArea;
+
+            constexpr int kSamples = 12;
+
+            for (int s = 0; s < kSamples; ++s)
+            {
+                const double f = static_cast<double>(s) / (kSamples - 1);
+
+                elevation.push_back(bed + f * (1.0 - bed));
+                planArea.push_back(model.horizontal.faceArea()[i] *
+                                   (0.1 + 0.9 * f));
+            }
+
+            ASSERT_TRUE(model.layered.setHypsography(c, elevation, planArea, message))
+                << message;
+        }
+    }
+
+    model.solver.enableMeteorology(/*attenuation=*/0.45);
+
+    // No heat exchange: this is about momentum. Only the wind varies.
+    FVQual::Hydro::Meteorology weather;
+    weather.airTemperature = 15.0;
+    weather.dewPoint       = 15.0;
+    weather.cloudCover     = 1.0;
+    weather.shortwave      = 0.0;
+    weather.windDirection  = 0.0;
+
+    const auto blow = [&](double speed, double seconds) {
+        weather.windSpeed          = speed;
+        model.solver.meteorology() = weather;
+
+        std::string  message;
+        const double until = seconds;
+
+        for (double elapsed = 0.0; elapsed < until;)
+        {
+            const double dt = std::min(model.solver.stableTimeStep(), 300.0);
+
+            ASSERT_TRUE(model.solver.step(dt, message))
+                << "at " << speed << " m/s: " << message;
+
+            elapsed += dt;
+
+            for (int64_t c = 0; c < model.layered.columnCount(); ++c)
+            {
+                const double depth = model.layered.surfaceElevation()
+                                         [static_cast<size_t>(c)] -
+                                     model.horizontal.faceBed()[static_cast<size_t>(c)];
+
+                ASSERT_GT(depth, 0.2)
+                    << "column " << c << " drained to " << depth << " m under "
+                    << speed << " m/s";
+            }
+        }
+    };
+
+    // DeGray's day 96.75 sequence, at its three-hour met spacing.
+    blow(3.4, 10800.0);
+    blow(12.1, 10800.0);
+    blow(2.3, 10800.0);
+    blow(0.0, 21600.0);
+}

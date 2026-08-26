@@ -171,6 +171,10 @@ int main(int argc, char **argv)
     // reservoir is to run both against the same measurements.
     const bool closure = argc > 4 && std::string(argv[4]) == "kepsilon";
 
+    // Bisection: run the same mesh as a prismatic basin, with no storage curve,
+    // to separate a hypsography failure from everything else.
+    const bool nohyps = argc > 5 && std::string(argv[5]) == "nohyps";
+
     const int kLayers = layerCount();
 
     std::string message;
@@ -238,7 +242,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!bathymetry.applyHypsography(layered, message))
+    if (!nohyps && !bathymetry.applyHypsography(layered, message))
     {
         std::cerr << "hypsography: " << message << '\n';
         return 1;
@@ -328,6 +332,12 @@ int main(int argc, char **argv)
     options.maxTimeStep = 300.0;
     options.useTurbulenceClosure = closure;
     const bool nowind = argc > 5 && std::string(argv[5]) == "nowind";
+
+    // Diagnostic bisection: run the same geometry and meteorology with the
+    // branch inflow and the dam release switched off, to separate a forcing
+    // failure from a geometry one.
+    const bool nosources = argc > 5 && std::string(argv[5]) == "nosources";
+
 
     if (!solver.initialize(layered, state, registry, options, message))
     {
@@ -419,9 +429,11 @@ int main(int argc, char **argv)
         weather.shortwave.setUniform(
             FVQual::Hydro::clearSkySolarRadiation(day, kLatitude, cover));
 
-        if (!solver.sources().setDischarge(inflowIndex, inflow.valueAt(day, 0), message) ||
-            !solver.sources().setDischarge(outflowIndex, -outflow.valueAt(day, 0),
-                                           message))
+        const double qin  = nosources ? 0.0 : inflow.valueAt(day, 0);
+        const double qout = nosources ? 0.0 : outflow.valueAt(day, 0);
+
+        if (!solver.sources().setDischarge(inflowIndex, qin, message) ||
+            !solver.sources().setDischarge(outflowIndex, -qout, message))
         {
             std::cerr << "discharge: " << message << '\n';
             return 1;
