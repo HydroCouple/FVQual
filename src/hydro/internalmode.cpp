@@ -497,6 +497,9 @@ double InternalModeSolver::stableTimeStep() const
     double heaviest  = 0.0;
     double deepest   = 0.0;
 
+    int64_t fastestColumn = -1;
+    int     fastestLayer  = -1;
+
     for (int64_t c = 0; c < columns; ++c)
     {
         deepest = std::max(deepest, mesh.columnDepth()[static_cast<size_t>(c)]);
@@ -508,7 +511,17 @@ double InternalModeSolver::stableTimeStep() const
             lightest = std::min(lightest, state.density[cell]);
             heaviest = std::max(heaviest, state.density[cell]);
 
-            fastest = std::max(fastest, std::hypot(state.u[cell], state.v[cell]));
+            const double speed = std::hypot(state.u[cell], state.v[cell]);
+
+            if (speed > fastest)
+            {
+                fastest = speed;
+
+                // Which cell is fastest, not just how fast. Reporting only the
+                // magnitude sent two diagnostic runs chasing healthy columns.
+                fastestColumn = c;
+                fastestLayer  = k;
+            }
         }
     }
 
@@ -524,9 +537,9 @@ double InternalModeSolver::stableTimeStep() const
     // Which constraint actually binds, and where. Chasing a collapsing step by
     // tracing a column picked by guesswork wastes runs; the solver knows the
     // answer and can simply say it.
-    m_diagnostics.limitingColumn = -1;
-    m_diagnostics.limitingLayer  = -1;
-    m_diagnostics.limitingSpeed  = fastest;
+    m_diagnostics.limitingColumn  = fastestColumn;
+    m_diagnostics.limitingLayer   = fastestLayer;
+    m_diagnostics.limitingSpeed   = fastest;
     m_diagnostics.limitIsVertical = false;
 
     // Vertical advection has its own Courant limit, and it is usually the
