@@ -343,6 +343,103 @@ TEST(Barotropic, WindSetupIsReachedFromRestOverAShoalingBed)
         << "a closed basin under steady wind should settle, not circulate";
 }
 
+/*!
+ * \brief The same shoal, but with a storage curve, under an impulsive gust.
+ *
+ * DeGray fails at day 96.75 and nowhere else. The met record there reads
+ * 3.4, **12.1**, 2.3, 0.0 m/s at three-hour spacing — one isolated gust, a
+ * 12.7-fold jump in stress and back down within nine hours.
+ *
+ * The gate above passes over a shoaling bed, so a sloping bed under steady wind
+ * is not the problem. Two things separate it from DeGray: the storage curve, and
+ * the impulse. This adds both. A reservoir that narrows with depth holds far
+ * less than its surface area suggests, so the same outflux empties it faster,
+ * and an impulsive stress is what discovers that.
+ */
+TEST(Barotropic, AnImpulsiveGustOverATaperingBasinDoesNotEmptyIt)
+{
+    constexpr int    kColumns = 40;
+    constexpr double kLength  = 8000.0;
+    constexpr double kDeep    = 25.0;
+    constexpr double kShallow = 4.0;
+    constexpr double kGust    = 0.25; // Pa, DeGray's peak.
+
+    BarotropicOptions options;
+    options.gravity         = kGravity;
+    options.frictionEnabled = true;
+
+    const HorizontalMesh mesh =
+        channel(kColumns, kLength, 300.0, [](double x) {
+            const double f = x / kLength;
+            return -(kDeep + (kShallow - kDeep) * f);
+        });
+
+    BarotropicSolver solver;
+    std::string      message;
+
+    ASSERT_TRUE(solver.initialize(mesh, options, message)) << message;
+
+    // A storage curve that tapers hard with depth: full plan area at the
+    // surface falling to a tenth of it at the bed, which is the shape DeGray
+    // has and a prismatic channel does not.
+    for (int64_t c = 0; c < mesh.faceCount(); ++c)
+    {
+        const size_t i   = static_cast<size_t>(c);
+        const double bed = mesh.faceBed()[i];
+        const double top = 1.0;
+
+        std::vector<double> elevation;
+        std::vector<double> planArea;
+
+        constexpr int kSamples = 12;
+
+        for (int s = 0; s < kSamples; ++s)
+        {
+            const double f = static_cast<double>(s) / (kSamples - 1);
+            const double z = bed + f * (top - bed);
+
+            elevation.push_back(z);
+            planArea.push_back(mesh.faceArea()[i] * (0.1 + 0.9 * f));
+        }
+
+        ASSERT_TRUE(solver.setHypsography(c, elevation, planArea, message)) << message;
+    }
+
+    const std::vector<double> flat(static_cast<size_t>(kColumns), 0.0);
+    ASSERT_TRUE(solver.setSurface(flat, message)) << message;
+
+    // Driven through setWindStress, which is the path the internal mode uses,
+    // so this exercises what DeGray exercises rather than a parallel one.
+    const auto sweep = [&](double stress, double seconds) {
+        const std::vector<double> taux(static_cast<size_t>(kColumns), stress);
+        const std::vector<double> tauy(static_cast<size_t>(kColumns), 0.0);
+
+        ASSERT_TRUE(solver.setWindStress(taux, tauy, message)) << message;
+        ASSERT_TRUE(solver.advance(seconds, message)) << message;
+
+        for (int64_t c = 0; c < solver.columnCount(); ++c)
+        {
+            const size_t i = static_cast<size_t>(c);
+
+            const double depth = solver.surfaceElevation()[i] - mesh.faceBed()[i];
+
+            ASSERT_GT(depth, 0.1)
+                << "column " << c << " drained to " << depth << " m under "
+                << stress << " Pa";
+        }
+    };
+
+    // The gust, at DeGray's three-hour met spacing: rise, peak, fall, calm.
+    sweep(0.02, 10800.0);
+    sweep(kGust, 10800.0);
+    sweep(0.01, 10800.0);
+    sweep(0.0, 21600.0);
+
+    // And it must settle rather than ring indefinitely.
+    EXPECT_LT(maximumSpeed(solver), 0.20)
+        << "the basin was still ringing long after the gust passed";
+}
+
 TEST(Barotropic, SteadyWindSetupIsHeldAgainstTheAnalyticSlope)
 {
     // Steady-state wind setup balances wind stress against the pressure
