@@ -654,7 +654,40 @@ double BarotropicSolver::stableTimeStep() const
         if (speedSum[i] <= 0.0)
             continue;
 
-        smallest = std::min(smallest, area[i] / speedSum[i]);
+        // The Courant condition limits how much of a cell's *storage* may leave
+        // in a step, so the area it needs is the one that actually holds water
+        // at the current stage — not the plan area at full pool.
+        //
+        // With hypsography those differ by a great deal: DeGray's upper layers
+        // are 85 times wider than its lower ones, so a drawn-down column holds a
+        // small fraction of what `faceArea` implies and the step permitted here
+        // was too long by the same factor. Under strong wind that drains the
+        // column within one step, the storage integral goes negative, and the
+        // stage is clamped to the bed — which is exactly how DeGray failed, in
+        // shallow columns, only with wind stress on, and reshuffling across
+        // resolutions because it depends on the precise step sequence.
+        //
+        // This control predates F1.5 and was written for the constant-area
+        // equations. With no storage curve set, storageArea() returns the
+        // fallback and the expression is what it always was.
+        // The right measure is the *mean* plan area over the wetted column,
+        // V/h, not the area at the surface. Where the basin narrows with depth
+        // the surface area still overstates the water available: a column can
+        // be 20 m deep and hold a fraction of 20 m times its surface area.
+        // Dividing the storage integral by the depth gives the area that, times
+        // the depth, is the volume actually there.
+        double holding = storageArea(c, m_eta[i], area[i]);
+
+        if (m_h[i] > m_options.dryDepth)
+        {
+            const double bedLevel = m_eta[i] - m_h[i];
+            const double volume   = storageVolume(c, m_eta[i], area[i], bedLevel);
+
+            if (volume > 0.0)
+                holding = std::min(holding, volume / m_h[i]);
+        }
+
+        smallest = std::min(smallest, holding / speedSum[i]);
     }
 
     if (std::isinf(smallest))

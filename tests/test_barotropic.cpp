@@ -257,6 +257,92 @@ TEST(Barotropic, SeichePeriodMatchesLinearTheory)
 
 // ── Wind forcing ──────────────────────────────────────────────────────────
 
+/*!
+ * \brief Wind setup reached from rest, over a bed that shoals.
+ *
+ * The existing gate below starts the basin *at* the analytic tilt and checks
+ * that wind holds it. That tests the equilibrium and says nothing about the
+ * approach to it, which is where DeGray fails: under the year's strongest wind
+ * a shallow column drains to its bed, and which resolutions survive reshuffles
+ * when the formulation changes. An instability in the transient is invisible to
+ * a test that begins at the answer.
+ *
+ * So: start flat, switch the wind on, and require the basin to arrive at the
+ * analytic tilt and stay bounded on the way. Over a sloping bed, because
+ * `d(eta)/dx = tau/(rho g H)` steepens as `H` falls, and the shallow end is
+ * exactly where the real model comes apart.
+ */
+TEST(Barotropic, WindSetupIsReachedFromRestOverAShoalingBed)
+{
+    constexpr int    kColumns = 60;
+    constexpr double kLength  = 6000.0;
+    constexpr double kDeep    = 30.0;
+    constexpr double kShallow = 4.0;
+    constexpr double kStress  = 0.25; // Pa, near DeGray's peak wind.
+
+    BarotropicOptions options;
+    options.gravity         = kGravity;
+    options.windStressX     = kStress;
+    options.frictionEnabled = true;
+
+    // Linear shoal from deep at x = 0 to shallow at x = L.
+    const HorizontalMesh mesh =
+        channel(kColumns, kLength, 200.0, [](double x) {
+            const double f = x / kLength;
+            return -(kDeep + (kShallow - kDeep) * f);
+        });
+
+    BarotropicSolver solver;
+    std::string      message;
+
+    ASSERT_TRUE(solver.initialize(mesh, options, message)) << message;
+
+    // Flat surface, at rest. Everything that follows is the wind's doing.
+    const std::vector<double> flat(static_cast<size_t>(kColumns), 0.0);
+    ASSERT_TRUE(solver.setSurface(flat, message)) << message;
+
+    // Long enough for the basin to fill and settle: the gravity-wave traverse
+    // is ~L/sqrt(gH) ≈ 350 s, so several thousand seconds is many crossings.
+    for (int i = 0; i < 40; ++i)
+    {
+        ASSERT_TRUE(solver.advance(300.0, message)) << message;
+
+        // Bounded on the way, not merely at the end. A run that blows up and
+        // recovers is not a run that worked.
+        for (int64_t c = 0; c < solver.columnCount(); ++c)
+        {
+            const size_t i2 = static_cast<size_t>(c);
+
+            const double depth = solver.surfaceElevation()[i2] -
+                                 mesh.faceBed()[i2];
+
+            ASSERT_GT(depth, 0.1)
+                << "column " << c << " drained to " << depth
+                << " m at sweep " << i << " — the shallow end is where DeGray fails";
+        }
+    }
+
+    // The analytic setup, integrated across the shoal:
+    //   d(eta)/dx = tau/(rho g H(x))  =>  Delta eta = tau L ln(Hd/Hs) /
+    //                                     (rho g (Hd - Hs))
+    const double expected = kStress * kLength * std::log(kDeep / kShallow) /
+                            (options.waterDensity * kGravity * (kDeep - kShallow));
+
+    const size_t last = static_cast<size_t>(solver.columnCount() - 1);
+
+    const double measured =
+        solver.surfaceElevation()[last] - solver.surfaceElevation()[0];
+
+    EXPECT_GT(measured, 0.0) << "the surface did not tilt downwind";
+
+    EXPECT_NEAR(measured, expected, 0.35 * expected)
+        << "setup " << measured << " m against an analytic " << expected << " m";
+
+    // And the basin is closed, so at steady state it must be near rest.
+    EXPECT_LT(maximumSpeed(solver), 0.10)
+        << "a closed basin under steady wind should settle, not circulate";
+}
+
 TEST(Barotropic, SteadyWindSetupIsHeldAgainstTheAnalyticSlope)
 {
     // Steady-state wind setup balances wind stress against the pressure
