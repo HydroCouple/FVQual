@@ -107,6 +107,23 @@ struct FVQual_EXPORT BarotropicDiagnostics
     double  totalVolume = 0.0; //!< Domain water volume (m³).
     int64_t wetColumns  = 0;   //!< Columns above the dry threshold.
     int64_t steps       = 0;   //!< Steps taken by the last advance().
+
+    /*!
+     * \brief The Courant-limited step before clamping (s), and how often the
+     *        floor bound it.
+     *
+     * `minTimeStep` exists so the solver cannot stall, but clamping up to it
+     * means taking a step the Courant condition forbids — silently. That is not
+     * hypothetical: DeGray's narrowest segment tapers to 0.8% of its surface
+     * width at the bed, so the storage-limited step for that column falls orders
+     * of magnitude below the floor, and the violating step drains it under
+     * strong wind. The run reported nothing.
+     *
+     * A guard that keeps a model running instead of telling you it cannot is
+     * worse than one that stops. These make the clamp visible.
+     */
+    double  requestedTimeStep = 0.0;
+    int64_t clampedSteps      = 0;
 };
 
 /*!
@@ -500,6 +517,17 @@ public:
         return m_accumulationInterval;
     }
 
+    /*!
+     * \brief Whether the time-step floor bound during the last advance().
+     *
+     * True means at least one step violated the Courant condition. Results
+     * after that are not trustworthy, however plausible they look.
+     */
+    [[nodiscard]] bool timeStepFloorWasBinding() const noexcept
+    {
+        return m_diagnostics.clampedSteps > 0;
+    }
+
     [[nodiscard]] const BarotropicDiagnostics &diagnostics() const noexcept
     {
         return m_diagnostics;
@@ -526,7 +554,10 @@ private:
 
     const Mesh::HorizontalMesh *m_mesh = nullptr;
     BarotropicOptions           m_options;
-    BarotropicDiagnostics       m_diagnostics;
+    // Mutable: stableTimeStep() is const but has to record when the floor
+    // bound, because a silent Courant violation is exactly what is being
+    // reported and hiding it inside a const method is how it stayed silent.
+    mutable BarotropicDiagnostics m_diagnostics;
 
     int64_t m_columnCount = 0;
     double  m_time        = 0.0;

@@ -397,7 +397,8 @@ int main(int argc, char **argv)
     double day       = kStartDay;
     double nextWrite = kStartDay;
 
-    int64_t steps = 0;
+    int64_t steps       = 0;
+    bool    warnedFloor = false;
 
     while (day < endDay)
     {
@@ -456,6 +457,19 @@ int main(int argc, char **argv)
 
         day += dt / 86400.0;
         ++steps;
+
+        // A Courant violation is silent unless something says so. DeGray's
+        // narrowest segment tapers to 0.8% of its surface width at the bed, so
+        // the storage-limited step for that column falls below the floor and the
+        // solver clamps up to it — taking a step the condition forbids.
+        if (solver.external().timeStepFloorWasBinding() && !warnedFloor)
+        {
+            std::cerr << "warning: the barotropic time-step floor bound at day "
+                      << day << "; the Courant condition was violated and the "
+                         "results after this point are not trustworthy\n";
+
+            warnedFloor = true;
+        }
 
         if (day < nextWrite)
             continue;

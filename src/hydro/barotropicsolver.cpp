@@ -691,10 +691,21 @@ double BarotropicSolver::stableTimeStep() const
     }
 
     if (std::isinf(smallest))
+    {
+        m_diagnostics.requestedTimeStep = m_options.maxTimeStep;
         return m_options.maxTimeStep;
+    }
 
-    return std::clamp(m_options.cflNumber * smallest, m_options.minTimeStep,
-                      m_options.maxTimeStep);
+    const double requested = m_options.cflNumber * smallest;
+
+    m_diagnostics.requestedTimeStep = requested;
+
+    // Record rather than hide: clamping *up* to the floor takes a step the
+    // Courant condition forbids. See BarotropicDiagnostics::clampedSteps.
+    if (requested < m_options.minTimeStep)
+        ++m_diagnostics.clampedSteps;
+
+    return std::clamp(requested, m_options.minTimeStep, m_options.maxTimeStep);
 }
 
 bool BarotropicSolver::setHypsography(int64_t column, std::span<const double> elevation,
