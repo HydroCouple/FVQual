@@ -591,31 +591,8 @@ void InternalModeSolver::advanceMomentum(double dt)
 
     // ── Implicit vertical viscosity, one tridiagonal solve per column ─────
 
-    // Surface wind stress, per column. Prescribed through the options when the
-    // model is not being driven by meteorology, and derived from wind speed and
-    // direction when it is — the same duality `surfaceHeatFlux` and the
-    // meteorological budget already have, and for the same reason: a prescribed
-    // value is right for a controlled experiment and useless for a reservoir.
-    //
-    // Deriving it here is what closes the DeGray defect. Wind was being read for
-    // the heat budget and never turned into momentum, so it evaporated water and
-    // moved none — and since Ri = N²/max(shear, 1e-12) has no shear to work with
-    // when nothing drives the surface, that silently collapsed the whole mixing
-    // scheme to its 1e-7 background for an entire simulated year.
-    m_windStressX.assign(static_cast<size_t>(columns), m_options.windStressX);
-    m_windStressY.assign(static_cast<size_t>(columns), m_options.windStressY);
-
-    if (m_useMeteorology)
-    {
-        FVQual_PARALLEL_FOR
-        for (int64_t c = 0; c < columns; ++c)
-        {
-            const WindStress stress = windStress(m_meteorology.at(c));
-
-            m_windStressX[static_cast<size_t>(c)] = stress.x;
-            m_windStressY[static_cast<size_t>(c)] = stress.y;
-        }
-    }
+    // Surface wind stress per column was filled at the top of the step, so this
+    // and the external mode's body acceleration read the same values.
 
     FVQual_PARALLEL_FOR
     for (int64_t c = 0; c < columns; ++c)
@@ -1481,6 +1458,37 @@ bool InternalModeSolver::step(double dt, std::string &message)
 
     ScopedTimer stepTimer(m_profile.total);
 
+    // 0. Surface wind stress, per column, before anything reads it.
+    //
+    // Filled here rather than where it is first used because two consumers need
+    // it at different points in the step — the external mode's body acceleration
+    // and the internal mode's surface boundary condition — and they must see the
+    // *same* stress. Computing it inside the later consumer would hand the
+    // earlier one the previous step's wind, and a force lagged across a
+    // subcycling interval is how Phase 3's bug 1 turned a millimetre of surface
+    // tilt into several metres.
+    //
+    // It depends only on meteorology and geometry, never on the evolving state,
+    // so there is nothing to gain by deferring it.
+    {
+        const int64_t columns = mesh.columnCount();
+
+        m_windStressX.assign(static_cast<size_t>(columns), m_options.windStressX);
+        m_windStressY.assign(static_cast<size_t>(columns), m_options.windStressY);
+
+        if (m_useMeteorology)
+        {
+            FVQual_PARALLEL_FOR
+            for (int64_t c = 0; c < columns; ++c)
+            {
+                const WindStress stress = windStress(m_meteorology.at(c));
+
+                m_windStressX[static_cast<size_t>(c)] = stress.x;
+                m_windStressY[static_cast<size_t>(c)] = stress.y;
+            }
+        }
+    }
+
     // 1. Density, then the mixing it controls, then the pressure it exerts.
     {
         ScopedTimer timer(m_profile.density);
@@ -1528,6 +1536,27 @@ bool InternalModeSolver::step(double dt, std::string &message)
         {
             m_columnAccelerationX[static_cast<size_t>(c)] = sumX / depth;
             m_columnAccelerationY[static_cast<size_t>(c)] = sumY / depth;
+
+            // Wind stress belongs to *both* modes. The internal mode applies it
+            // to the surface layer; the depth-averaged share has to reach the
+            // external mode too, or the two disagree about the column's momentum
+            // and mode adjustment fights the difference rather than reconciling
+            // it. That is Phase 3's bug 2 in a different term, and it showed up
+            // the same way: DeGray dried a column on day 96 the first time wind
+            // was wired into one mode only.
+            //
+            // The barotropic solver multiplies this by the water depth, so
+            // tau/(rho*H) contributes exactly tau/rho of depth-integrated
+            // momentum — the surface stress, no more.
+            if (!m_windStressX.empty())
+            {
+                const double scale = m_options.referenceDensity * depth;
+
+                m_columnAccelerationX[static_cast<size_t>(c)] +=
+                    m_windStressX[static_cast<size_t>(c)] / scale;
+                m_columnAccelerationY[static_cast<size_t>(c)] +=
+                    m_windStressY[static_cast<size_t>(c)] / scale;
+            }
         }
     }
 
