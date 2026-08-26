@@ -137,6 +137,12 @@ int main(int argc, char **argv)
 
     const std::string outputs = argc > 2 ? argv[2] : ".";
 
+    // Optional third argument: stop early. The full year takes long enough that
+    // a diagnostic question about spring stratification should not have to wait
+    // for December, and a bounded window is also the only way to run this where
+    // a wall clock is enforced.
+    const double endDay = argc > 3 ? std::atof(argv[3]) : kEndDay;
+
     std::string message;
 
     // ── Geometry ──────────────────────────────────────────────────────────
@@ -348,7 +354,7 @@ int main(int argc, char **argv)
 
     int64_t steps = 0;
 
-    while (day < kEndDay)
+    while (day < endDay)
     {
         FVQual::Forcing::MeteorologyField &weather = solver.meteorology();
 

@@ -130,10 +130,23 @@ def mixed_layer_depth(depth, temperature, drop=MIXED_LAYER_DROP):
     return float(depth[first - 1] + weight * (depth[first] - depth[first - 1]))
 
 
+#! A cast further than this from any modelled day is not comparable.
+MATCH_TOLERANCE = 2.0
+
+
 def model_profile(profiles, day):
-    """The modelled profile nearest `day`, surface first."""
+    """The modelled profile nearest `day`, surface first.
+
+    Returns nearest = None when the run does not cover the cast. Without this
+    a shortened run silently compares its final profile against every later
+    measurement — a run stopping in November was being scored against a
+    December cast six weeks away, which is not an error in the model.
+    """
     days = profiles["jday"].unique()
     nearest = days[np.abs(days - day).argmin()]
+
+    if abs(nearest - day) > MATCH_TOLERANCE:
+        return None, None, None
 
     slab = profiles[profiles.jday == nearest].sort_values("depth_m")
 
@@ -148,6 +161,9 @@ def compare(profiles, observed):
         depth, measured = observed[day]
 
         matched, mdepth, modelled = model_profile(profiles, day)
+
+        if matched is None:
+            continue
 
         # Only compare where the model has water; the casts run slightly
         # deeper than the deepest layer centre.
@@ -183,7 +199,10 @@ def depth_bands(profiles, observed, edges=(0, 5, 10, 20, 30, 60)):
 
     for day in sorted(observed):
         depth, measured = observed[day]
-        _, mdepth, modelled = model_profile(profiles, day)
+        matched, mdepth, modelled = model_profile(profiles, day)
+
+        if matched is None:
+            continue
 
         inside = (depth >= mdepth.min()) & (depth <= mdepth.max())
 
@@ -224,6 +243,9 @@ def figure_profiles(profiles, observed, path, count=9):
         depth, measured = observed[day]
         matched, mdepth, modelled = model_profile(profiles, day)
 
+        if matched is None:
+            continue
+
         ax.plot(measured, depth, color="#1b1b1b", lw=1.6, label="measured")
         ax.plot(modelled, mdepth, color="#c0392b", lw=1.6, label="FVQual")
 
@@ -256,7 +278,10 @@ def figure_bias(profiles, observed, path):
 
     for j, day in enumerate(days):
         depth, measured = observed[day]
-        _, mdepth, modelled = model_profile(profiles, day)
+        matched, mdepth, modelled = model_profile(profiles, day)
+
+        if matched is None:
+            continue
 
         usable = (grid >= max(depth.min(), mdepth.min())) & \
                  (grid <= min(depth.max(), mdepth.max()))
