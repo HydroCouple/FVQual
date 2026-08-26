@@ -149,6 +149,7 @@ struct FVQual_EXPORT InternalModeOptions
     double windStressX = 0.0; //!< Surface wind stress, x (Pa).
     double windStressY = 0.0; //!< Surface wind stress, y (Pa).
 
+
     /*!
      * \brief Net surface heat flux into the water (W/m²), positive warming.
      *

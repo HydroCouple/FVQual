@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -56,7 +57,28 @@ constexpr double kStartDay        = 64.5;
 constexpr double kEndDay          = 358.7;
 
 //! Layers in the sigma grid. Enough to resolve a thermocline in 57 m.
-constexpr int kLayers = 30;
+constexpr int kDefaultLayers = 30;
+
+/*!
+ * \brief Layer count, overridable through `FVQUAL_LAYERS`.
+ *
+ * A knob for convergence testing, not for configuration. If an error shrinks as
+ * the grid refines it is the discretisation; if it does not, it is the physics
+ * or the forcing, and no amount of resolution will help. That distinction is
+ * worth an environment variable.
+ */
+int layerCount()
+{
+    if (const char *value = std::getenv("FVQUAL_LAYERS"))
+    {
+        const int layers = std::atoi(value);
+
+        if (layers >= 4)
+            return layers;
+    }
+
+    return kDefaultLayers;
+}
 
 //! For the wind-direction convention change; see the conversion at its use.
 constexpr double kHalfPi = 0.5 * 3.14159265358979323846;
@@ -148,6 +170,8 @@ int main(int argc, char **argv)
     // than a rebuild, because the only way to know which is better on this
     // reservoir is to run both against the same measurements.
     const bool closure = argc > 4 && std::string(argv[4]) == "kepsilon";
+
+    const int kLayers = layerCount();
 
     std::string message;
 
