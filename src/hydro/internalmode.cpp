@@ -590,8 +590,32 @@ void InternalModeSolver::advanceMomentum(double dt)
     }
 
     // ── Implicit vertical viscosity, one tridiagonal solve per column ─────
-    const double windAccelerationX = m_options.windStressX / m_options.referenceDensity;
-    const double windAccelerationY = m_options.windStressY / m_options.referenceDensity;
+
+    // Surface wind stress, per column. Prescribed through the options when the
+    // model is not being driven by meteorology, and derived from wind speed and
+    // direction when it is — the same duality `surfaceHeatFlux` and the
+    // meteorological budget already have, and for the same reason: a prescribed
+    // value is right for a controlled experiment and useless for a reservoir.
+    //
+    // Deriving it here is what closes the DeGray defect. Wind was being read for
+    // the heat budget and never turned into momentum, so it evaporated water and
+    // moved none — and since Ri = N²/max(shear, 1e-12) has no shear to work with
+    // when nothing drives the surface, that silently collapsed the whole mixing
+    // scheme to its 1e-7 background for an entire simulated year.
+    m_windStressX.assign(static_cast<size_t>(columns), m_options.windStressX);
+    m_windStressY.assign(static_cast<size_t>(columns), m_options.windStressY);
+
+    if (m_useMeteorology)
+    {
+        FVQual_PARALLEL_FOR
+        for (int64_t c = 0; c < columns; ++c)
+        {
+            const WindStress stress = windStress(m_meteorology.at(c));
+
+            m_windStressX[static_cast<size_t>(c)] = stress.x;
+            m_windStressY[static_cast<size_t>(c)] = stress.y;
+        }
+    }
 
     FVQual_PARALLEL_FOR
     for (int64_t c = 0; c < columns; ++c)
@@ -612,7 +636,9 @@ void InternalModeSolver::advanceMomentum(double dt)
             std::vector<double> &field = component == 0 ? m_workU : m_workV;
 
             const double surfaceAcceleration =
-                component == 0 ? windAccelerationX : windAccelerationY;
+                (component == 0 ? m_windStressX[static_cast<size_t>(c)]
+                                : m_windStressY[static_cast<size_t>(c)]) /
+                m_options.referenceDensity;
 
             for (int k = 0; k < layers; ++k)
             {

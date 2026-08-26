@@ -149,6 +149,60 @@ struct Basin
 
 } // namespace
 
+// ── Wind reaches the momentum equation, not only the heat budget ──────────
+
+TEST(HeatBudget, WindDrivenBySunAndAirAlsoDrivesTheWater)
+{
+    // The regression gate for the defect a whole-reservoir comparison found and
+    // 254 unit tests did not: the DeGray driver set `windSpeed` for the heat
+    // budget, `windStressX/Y` stayed at their default zero, and wind evaporated
+    // water while moving none. Nothing failed, because each consumer was correct
+    // in isolation and no test asserted they were fed from one source.
+    //
+    // The second-order consequence was worse than the missing current. Vertical
+    // mixing is Richardson-damped, `Ri = N²/max(shear, 1e-12)`, so with nothing
+    // driving the surface there is no shear, Ri is enormous, and the eddy
+    // diffusivity collapses to its 1e-7 background — the mixing scheme runs every
+    // step and does nothing. A parameterisation switched off by an unset input in
+    // another module is invisible to every budget check.
+    Basin still;
+    still.build(/*layers=*/6, /*totalDepth=*/12.0, 15.0);
+
+    Meteorology calm = night();
+    calm.windSpeed   = 0.0;
+
+    still.solver.meteorology() = calm;
+    still.solver.enableMeteorology(/*attenuation=*/0.45);
+
+    still.run(60.0, 40);
+
+    Basin blown;
+    blown.build(/*layers=*/6, /*totalDepth=*/12.0, 15.0);
+
+    Meteorology blowing  = night();
+    blowing.windSpeed    = 12.0;
+    blowing.windDirection = 0.0;
+
+    blown.solver.meteorology() = blowing;
+    blown.solver.enableMeteorology(/*attenuation=*/0.45);
+
+    blown.run(60.0, 40);
+
+    const int64_t surface = blown.layered.cell(0, 0);
+
+    const double stillSpeed = std::abs(still.state.u[static_cast<size_t>(surface)]);
+    const double blownSpeed = std::abs(blown.state.u[static_cast<size_t>(surface)]);
+
+    EXPECT_NEAR(stillSpeed, 0.0, 1.0e-12) << "still air moved the water";
+
+    EXPECT_GT(blownSpeed, 1.0e-4)
+        << "wind cooled the water but did not move it — the DeGray defect";
+
+    // Direction, not just magnitude: this wind blows along +x.
+    EXPECT_GT(blown.state.u[static_cast<size_t>(surface)], 0.0)
+        << "the surface current opposes the wind driving it";
+}
+
 // ── The terms ─────────────────────────────────────────────────────────────
 
 TEST(HeatBudget, SaturationVapourPressureMatchesKnownValues)

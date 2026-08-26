@@ -624,6 +624,15 @@ private:
      * A member rather than a local so the per-step fill does not allocate.
      */
     std::vector<double> m_incidentShortwave;
+
+    /*!
+     * \brief Per-column surface wind stress (Pa), refreshed each step.
+     *
+     * Holds `InternalModeOptions::windStressX/Y` when meteorology is off and
+     * the derived `windStress()` when it is on.
+     */
+    std::vector<double> m_windStressX;
+    std::vector<double> m_windStressY;
     Kinetics::LightOptions            m_lightOptions;
     StepProfile                       m_profile;
     std::unique_ptr<IPressureClosure> m_pressure;
