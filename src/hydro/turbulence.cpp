@@ -3,6 +3,8 @@
 
 #include "fvqual/hydro/turbulence.h"
 
+#include "fvqual/parallel.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -71,7 +73,17 @@ void TurbulenceClosure::initialize(int64_t columns, int layers)
     m_tke.assign(interfaces, m_options.minTke);
     m_dissipation.assign(interfaces, m_options.minDissipation);
 
-    const size_t n = static_cast<size_t>(layers + 1);
+    // One slice per thread. advanceColumn() is called from inside a parallel
+    // loop over columns, and a single shared workspace is a race that corrupts
+    // the solve silently rather than crashing -- every thread would assemble
+    // its tridiagonal on top of whatever its neighbours were half-way through.
+    //
+    // This is the second time this exact bug has been written in this codebase:
+    // F7.1b found the same shared-workspace race in the momentum and scalar
+    // column solves. It survives unit testing because the gates call the solver
+    // from one thread; it only appears in the threaded model.
+    const size_t n = static_cast<size_t>(layers + 1) *
+                     static_cast<size_t>(std::max(1, maxThreads()));
 
     m_lower.assign(n, 0.0);
     m_diagonal.assign(n, 0.0);
@@ -88,9 +100,19 @@ void TurbulenceClosure::advanceColumn(int64_t column, double dt,
                                       double frictionSurface, double frictionBed,
                                       double *viscosity, double *diffusivity)
 {
-    const int    n      = m_layers + 1;
-    const size_t base   = static_cast<size_t>(column) * static_cast<size_t>(n);
-    const auto  &o      = m_options;
+    const int    n    = m_layers + 1;
+    const size_t base = static_cast<size_t>(column) * static_cast<size_t>(n);
+    const auto  &o    = m_options;
+
+    // This thread's slice of the shared workspace.
+    const size_t slice = static_cast<size_t>(threadIndex()) * static_cast<size_t>(n);
+
+    double *lower    = m_lower.data() + slice;
+    double *diagonal = m_diagonal.data() + slice;
+    double *upper    = m_upper.data() + slice;
+    double *rhs      = m_rhs.data() + slice;
+    double *solution = m_solution.data() + slice;
+    double *sweep    = m_sweep.data() + slice;
 
     // Spacing between interfaces: the thickness of the layer between them.
     auto spacingAt = [&](int i) {
@@ -141,32 +163,31 @@ void TurbulenceClosure::advanceColumn(int64_t column, double dt,
         const double shear    = viscosity[i] * shearSquared[i];
         const double buoyant  = -diffusivity[i] * buoyancy[i];
 
-        double lower = 0.0;
-        double upper = 0.0;
+        double lowerTerm = 0.0;
+        double upperTerm = 0.0;
 
         const double h = spacingAt(i);
 
         if (i > 0)
         {
             const double face = 0.5 * (viscosity[i] + viscosity[i - 1]) / o.sigmaK;
-            lower = -dt * face / (h * spacingAt(i - 1));
+            lowerTerm = -dt * face / (h * spacingAt(i - 1));
         }
 
         if (i + 1 < n)
         {
             const double face = 0.5 * (viscosity[i] + viscosity[i + 1]) / o.sigmaK;
-            upper = -dt * face / (h * spacingAt(i + 1));
+            upperTerm = -dt * face / (h * spacingAt(i + 1));
         }
 
-        m_lower[static_cast<size_t>(i)] = lower;
-        m_upper[static_cast<size_t>(i)] = upper;
+        lower[i] = lowerTerm;
+        upper[i] = upperTerm;
 
         // Dissipation goes on the diagonal as eps/k, so the sink is implicit in
         // k and cannot overshoot into negative energy however large the step.
-        m_diagonal[static_cast<size_t>(i)] =
-            1.0 - lower - upper + dt * eps / k;
+        diagonal[i] = 1.0 - lowerTerm - upperTerm + dt * eps / k;
 
-        m_rhs[static_cast<size_t>(i)] = k + dt * (shear + buoyant);
+        rhs[i] = k + dt * (shear + buoyant);
     }
 
     // Wall conditions: k = u*²/sqrt(c_mu) at both boundaries, which is the
@@ -177,24 +198,23 @@ void TurbulenceClosure::advanceColumn(int64_t column, double dt,
     const double bedTke = std::max(frictionBed * frictionBed / std::sqrt(o.cMu),
                                    o.minTke);
 
-    m_lower[0] = 0.0;
-    m_upper[0] = 0.0;
-    m_diagonal[0] = 1.0;
-    m_rhs[0] = surfaceTke;
+    lower[0] = 0.0;
+    upper[0] = 0.0;
+    diagonal[0] = 1.0;
+    rhs[0] = surfaceTke;
 
     const size_t last = static_cast<size_t>(n - 1);
 
-    m_lower[last]    = 0.0;
-    m_upper[last]    = 0.0;
-    m_diagonal[last] = 1.0;
-    m_rhs[last]      = bedTke;
+    lower[last]    = 0.0;
+    upper[last]    = 0.0;
+    diagonal[last] = 1.0;
+    rhs[last]      = bedTke;
 
-    solveTridiagonal(n, m_lower.data(), m_diagonal.data(), m_upper.data(),
-                     m_rhs.data(), m_sweep.data(), m_solution.data());
+    solveTridiagonal(n, lower, diagonal, upper, rhs, sweep, solution);
 
     for (int i = 0; i < n; ++i)
         m_tke[base + static_cast<size_t>(i)] =
-            std::max(m_solution[static_cast<size_t>(i)], o.minTke);
+            std::max(solution[i], o.minTke);
 
     // ── epsilon equation ──────────────────────────────────────────────────
     for (int i = 0; i < n; ++i)
@@ -212,30 +232,29 @@ void TurbulenceClosure::advanceColumn(int64_t column, double dt,
         // makes it. One coefficient cannot do both.
         const double c3 = buoyancy[i] >= 0.0 ? o.c3Stable : o.c3Unstable;
 
-        double lower = 0.0;
-        double upper = 0.0;
+        double lowerTerm = 0.0;
+        double upperTerm = 0.0;
 
         const double h = spacingAt(i);
 
         if (i > 0)
         {
             const double face = 0.5 * (viscosity[i] + viscosity[i - 1]) / o.sigmaEps;
-            lower = -dt * face / (h * spacingAt(i - 1));
+            lowerTerm = -dt * face / (h * spacingAt(i - 1));
         }
 
         if (i + 1 < n)
         {
             const double face = 0.5 * (viscosity[i] + viscosity[i + 1]) / o.sigmaEps;
-            upper = -dt * face / (h * spacingAt(i + 1));
+            upperTerm = -dt * face / (h * spacingAt(i + 1));
         }
 
-        m_lower[static_cast<size_t>(i)] = lower;
-        m_upper[static_cast<size_t>(i)] = upper;
+        lower[i] = lowerTerm;
+        upper[i] = upperTerm;
 
-        m_diagonal[static_cast<size_t>(i)] =
-            1.0 - lower - upper + dt * o.c2 * eps / k;
+        diagonal[i] = 1.0 - lowerTerm - upperTerm + dt * o.c2 * eps / k;
 
-        m_rhs[static_cast<size_t>(i)] =
+        rhs[i] =
             eps + dt * (eps / k) * (o.c1 * shear + c3 * buoyant);
     }
 
@@ -264,22 +283,21 @@ void TurbulenceClosure::advanceColumn(int64_t column, double dt,
         std::max(frictionBed * frictionBed * frictionBed / bedScale,
                  o.minDissipation);
 
-    m_lower[0]    = 0.0;
-    m_upper[0]    = 0.0;
-    m_diagonal[0] = 1.0;
-    m_rhs[0]      = surfaceEps;
+    lower[0]    = 0.0;
+    upper[0]    = 0.0;
+    diagonal[0] = 1.0;
+    rhs[0]      = surfaceEps;
 
-    m_lower[last]    = 0.0;
-    m_upper[last]    = 0.0;
-    m_diagonal[last] = 1.0;
-    m_rhs[last]      = bedEps;
+    lower[last]    = 0.0;
+    upper[last]    = 0.0;
+    diagonal[last] = 1.0;
+    rhs[last]      = bedEps;
 
-    solveTridiagonal(n, m_lower.data(), m_diagonal.data(), m_upper.data(),
-                     m_rhs.data(), m_sweep.data(), m_solution.data());
+    solveTridiagonal(n, lower, diagonal, upper, rhs, sweep, solution);
 
     for (int i = 0; i < n; ++i)
         m_dissipation[base + static_cast<size_t>(i)] =
-            std::max(m_solution[static_cast<size_t>(i)], o.minDissipation);
+            std::max(solution[i], o.minDissipation);
 
     // ── Coefficients from the updated state ───────────────────────────────
     for (int i = 0; i < n; ++i)
