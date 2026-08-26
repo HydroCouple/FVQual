@@ -12,6 +12,7 @@ add_library(fvqual_core
     hydro/pressureclosure.cpp
     hydro/internalmode.cpp
     hydro/heatbudget.cpp
+    hydro/turbulence.cpp
     transport/euleriantransport.cpp
     forcing/forcingfield.cpp
     forcing/sources.cpp

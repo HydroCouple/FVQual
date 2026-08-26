@@ -32,6 +32,7 @@ add_executable(fvqual_tests
     test_boundarytransport.cpp
     test_heatbudget.cpp
     test_forcingfield.cpp
+    test_turbulence.cpp
     test_macdonald.cpp
     test_kinetics_numerics.cpp
     test_reactionnetwork.cpp
