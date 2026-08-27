@@ -278,6 +278,112 @@ TEST(Conveyance, AShelvedColumnFeelsMoreFrictionThanAPrismaticOne)
         << "prismatic " << prismatic << " m/s, shelved " << shelved << " m/s";
 }
 
+TEST(Conveyance, LakeAtRestStaysExactWithColumnVaryingStorageCurves)
+{
+    // F1.5c, and the gate that decides whether a bank pressure term is needed
+    // at all.
+    //
+    // In a porosity-form shallow-water scheme the pressure flux carries a
+    // porosity factor, and where that factor varies from cell to cell the flux
+    // divergence does not vanish under a flat surface. Such a scheme needs a
+    // bank pressure term, `g h^2/2 * grad(phi)`, to cancel it, and is not
+    // well-balanced without one.
+    //
+    // FVQual is not written in that form. Hypsography enters through the
+    // volume-to-stage relation, not as a factor on the pressure flux, so the
+    // flux terms never see the curve. If that reasoning is right, a lake at
+    // rest over *differently shaped* columns stays exactly at rest with no
+    // extra term. Neither existing lake-at-rest gate sets a storage curve, so
+    // this was untested either way.
+    // An UNEVEN bed, not a flat one. Over a flat bed the Audusse correction is
+    // identically zero, so the hydrostatic reconstruction is never exercised
+    // and the gate is far weaker than it looks — the first version of this test
+    // was flat, and an ablation that deliberately broke the pressure term
+    // sailed through it. The bed has to vary for this to be a test of balance.
+    std::string message;
+
+    HorizontalMesh mesh;
+    ASSERT_TRUE(mesh.build(FVQual::Testing::basinGrid(kColumns, 1, 800.0, 200.0),
+                           message))
+        << message;
+
+    for (int64_t f = 0; f < mesh.faceCount(); ++f)
+        mesh.faceBed()[static_cast<size_t>(f)] =
+            kBed + 3.0 * std::sin(1.7 * static_cast<double>(f));
+
+    BarotropicSolver solver;
+    BarotropicOptions options;
+    options.frictionEnabled = false; // Balance, not drag.
+    ASSERT_TRUE(solver.initialize(mesh, options, message)) << message;
+
+    // Deliberately mismatched shapes: a near-prism beside a sharply tapering
+    // column is the strongest gradient in storage the mesh can carry, and is
+    // exactly where a missing bank term would show.
+    for (int64_t c = 0; c < mesh.faceCount(); ++c)
+    {
+        const size_t i     = static_cast<size_t>(c);
+        const double full  = mesh.faceArea()[i];
+        const double bed   = mesh.faceBed()[i];
+        const double span  = kStage - bed;
+        const double power = 0.2 + 2.5 * static_cast<double>(c);
+
+        // The surface area must differ from the plan area, and differ BY
+        // COLUMN. An earlier version had every curve reach the full plan area
+        // at the top, so the storage-to-plan ratio was exactly 1 everywhere at
+        // this stage — and an ablation that scaled the pressure term by that
+        // ratio was multiplying by one. A gate whose ratio is uniform cannot
+        // detect a term proportional to the ratio's gradient.
+        const double top = full * (0.35 + 0.2 * static_cast<double>(c));
+
+        std::vector<double> elevation;
+        std::vector<double> area;
+
+        constexpr int kSamples = 64;
+
+        for (int s = 0; s < kSamples; ++s)
+        {
+            const double f = static_cast<double>(s) / (kSamples - 1);
+
+            elevation.push_back(bed + f * span);
+            area.push_back(top *
+                           (kBedFraction + (1.0 - kBedFraction) * std::pow(f, power)));
+        }
+
+        ASSERT_TRUE(solver.setHypsography(c, elevation, area, message)) << message;
+    }
+
+    const std::vector<double> flat(static_cast<size_t>(kColumns), kStage);
+    ASSERT_TRUE(solver.setSurface(flat, message)) << message;
+
+    const std::vector<double> initialDepth  = solver.depth();
+    const double              initialVolume = solver.totalVolume();
+
+    for (int i = 0; i < 200; ++i)
+        ASSERT_TRUE(solver.step(0.05, message)) << message;
+
+    double fastest = 0.0;
+
+    for (int64_t c = 0; c < kColumns; ++c)
+    {
+        const size_t i = static_cast<size_t>(c);
+        fastest = std::max(fastest,
+                           std::hypot(solver.velocityX()[i], solver.velocityY()[i]));
+    }
+
+    // The same tolerance the prismatic lake-at-rest gates hold to. Anything
+    // looser would be conceding the point it is here to check.
+    EXPECT_LE(fastest, 1.0e-13) << "storage curves invented a current";
+
+    for (int64_t c = 0; c < kColumns; ++c)
+    {
+        const size_t i = static_cast<size_t>(c);
+        EXPECT_NEAR(solver.depth()[i], initialDepth[i], 1.0e-12) << "column " << c;
+        EXPECT_NEAR(solver.surfaceElevation()[i], kStage, 1.0e-12) << "column " << c;
+    }
+
+    EXPECT_NEAR(solver.totalVolume(), initialVolume, 1.0e-9);
+}
+
 TEST(Conveyance, ADryOrInvertedColumnConveysNothing)
 {
     Basin basin;

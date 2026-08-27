@@ -26,6 +26,21 @@ using it under-estimates friction, and worst where the hypsography is steepest.
   wave speeds still see `m_h`, because those depend on how much water is present
   and where its surface is, not on how well the section carries it.
 
+**The bank pressure term is not needed, and that is a measured result.** The plan
+named it, and in a porosity-form scheme it is mandatory: there the pressure flux
+carries a porosity factor, its divergence does not vanish under a flat surface,
+and `g h²/2 ∇φ` is what cancels it. FVQual is not written in that form —
+hypsography enters through the volume-to-stage relation, so the flux terms never
+see the curve. A lake at rest over an uneven bed, with differently shaped curves
+*and* differing surface areas column to column, stays exact to **1e-13** with no
+extra term. Adding one would introduce an imbalance rather than remove one.
+
+The gate earns that conclusion by being shown to fail: scaling the pressure
+correction by each column's storage ratio — putting the scheme into porosity form
+without its companion term — produces a **0.587 m/s** spurious current, five
+orders of magnitude past tolerance. It stands as the guard on anyone later moving
+the flux terms to porosity form and forgetting what has to come with it.
+
 **A correction to the first commit of this work.** Its header claimed the depth
 handed to Manning was the storage average `V/A`, and concluded the code
 *over*-estimated friction. `m_h` is the maximum depth, so the sign was backwards:
