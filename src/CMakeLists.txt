@@ -33,6 +33,7 @@ add_library(fvqual_core
     io/ugridreader.cpp
     io/layeredugridwriter.cpp
     component/sigmaverticalcoordinate.cpp
+    component/fvqualcomponent.cpp
     capi/capi_engine.cpp
     capi/capi_mesh.cpp
     capi/capi_sim.cpp
