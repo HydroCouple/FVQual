@@ -175,6 +175,12 @@ int main(int argc, char **argv)
     // to separate a hypsography failure from everything else.
     const bool nohyps = argc > 5 && std::string(argv[5]) == "nohyps";
 
+    // Bisection for the residual interior warm bias: keep wind stress, and the
+    // circulation it drives, but switch off turbulent vertical mixing. If the
+    // interior still warms, the heat is being advected down by the wind-driven
+    // cell rather than mixed down by the closure.
+    const bool nomix = argc > 5 && std::string(argv[5]) == "nomix";
+
     const int kLayers = layerCount();
 
     std::string message;
@@ -331,6 +337,14 @@ int main(int argc, char **argv)
     options.cflNumber = 0.5;
     options.maxTimeStep = 300.0;
     options.useTurbulenceClosure = closure;
+
+    if (nomix)
+    {
+        // Convective adjustment stays: without it an unstable column is not
+        // resolved at all, which is a different experiment.
+        options.neutralViscosity      = 0.0;
+        options.backgroundDiffusivity = 1.0e-9;
+    }
     const bool nowind = argc > 5 && std::string(argv[5]) == "nowind";
 
     // Diagnostic bisection: run the same geometry and meteorology with the
