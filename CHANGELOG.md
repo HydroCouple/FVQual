@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Investigated — the vertical Courant "self-reference" does not reproduce
+
+Carried as an open defect: `diagnoseVerticalFlux` closes layer continuity with
+`(V_now − V_old)/dt`, and `stableTimeStep()` reads the result to size the *next*
+step, so a noisy volume difference divided by a vanishing `dt` could inflate the
+diagnosed velocity and drive the step down further. Measured rather than assumed
+(`verification/interfaces/vertical_cfl_selfreference.cpp`):
+
+| | at rest | tilted surface, 600 s of seiche |
+|---|---|---|
+| dt probed | 100 s → 1e-4 s | cap 10 s → 0.25 s |
+| max \|w\| | 1.2e-16 → 7.7e-39 m/s | 1.89e-6 → 1.78e-6 m/s |
+| behaviour | *falls* with dt | flat to **1.06×** |
+
+At rest the volume change is exactly zero — the stage does not move, so the two
+volumes are bitwise equal — and there is nothing to amplify. With real motion the
+ratio converges: a fortyfold change in step size moves it by six percent. The lag
+is real but benign. **No code change**, because nothing is broken.
+
+The measurement took two corrections worth recording. The first tilted run took a
+single step from rest, where nothing has accelerated, so it compared round-off
+against round-off, reported a 16000× "spread", and concluded the defect was real
+— entirely an artefact. And the step cap has to be shown to bind, or four runs
+take identical steps and the table compares one calculation with itself; the
+achieved step is now printed beside each cap.
+
 ### Added — F8.2c–f, coupling semantics carried across the boundary
 
 Three interfaces added upstream to HydroCouple, all optional and discovered by
