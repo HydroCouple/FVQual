@@ -330,6 +330,28 @@ double W2Bathymetry::surfaceAreaAt(double surfaceElevation) const
     return total;
 }
 
+double W2Bathymetry::surfaceWidth(int segment) const
+{
+    const double wse = m_initialSurface[static_cast<size_t>(segment)];
+
+    for (int k = 0; k < layerCount(); ++k)
+    {
+        const double bottom = layerBottom(k);
+        const double top    = bottom + m_layerHeight[static_cast<size_t>(k)];
+
+        if (wse > bottom && wse <= top && width(k, segment) > 0.0)
+            return width(k, segment);
+    }
+
+    // The surface may sit above every wetted layer; fall back to the widest.
+    double widest = 0.0;
+
+    for (int k = 0; k < layerCount(); ++k)
+        widest = std::max(widest, width(k, segment));
+
+    return widest;
+}
+
 bool W2Bathymetry::toMeshDefinition(HydroCouple::SDK::IO::MeshDefinition &definition,
                                     std::vector<double> &bed, std::string &message) const
 {
@@ -387,27 +409,6 @@ bool W2Bathymetry::toMeshDefinition(HydroCouple::SDK::IO::MeshDefinition &defini
 
     // Half-width at each boundary, from the widths of the adjacent segments at
     // the initial water surface: that is the plan geometry the model runs at.
-    const auto surfaceWidth = [&](int segment) {
-        const double wse = m_initialSurface[static_cast<size_t>(segment)];
-
-        for (int k = 0; k < layerCount(); ++k)
-        {
-            const double bottom = layerBottom(k);
-            const double top    = bottom + m_layerHeight[static_cast<size_t>(k)];
-
-            if (wse > bottom && wse <= top && width(k, segment) > 0.0)
-                return width(k, segment);
-        }
-
-        // The surface may sit above every wetted layer; fall back to the widest.
-        double widest = 0.0;
-
-        for (int k = 0; k < layerCount(); ++k)
-            widest = std::max(widest, width(k, segment));
-
-        return widest;
-    };
-
     for (size_t j = 0; j <= count; ++j)
     {
         double half = 0.0;
@@ -524,6 +525,236 @@ bool W2Bathymetry::applyHypsography(Mesh::LayeredMesh &mesh, std::string &messag
 
         if (!mesh.setHypsography(static_cast<int64_t>(j), elevation, area, message))
             return false;
+    }
+
+    message.clear();
+    return true;
+}
+
+
+namespace {
+
+/*!
+ * \brief Overlap of [a, b] with the section [-halfWidth, +halfWidth] (m).
+ */
+double lateralOverlap(double a, double b, double halfWidth)
+{
+    const double lower = std::max(a, -halfWidth);
+    const double upper = std::min(b, halfWidth);
+
+    return std::max(0.0, upper - lower);
+}
+
+} // namespace
+
+bool W2Bathymetry::toLateralMeshDefinition(int lateralCells,
+                                           HydroCouple::SDK::IO::MeshDefinition &definition,
+                                           std::vector<double> &bed,
+                                           std::string &message) const
+{
+    if (lateralCells < 1)
+    {
+        message = "lateralCells must be at least 1";
+        return false;
+    }
+
+    if (m_active.empty())
+    {
+        message = "no active segments to build a mesh from";
+        return false;
+    }
+
+    definition          = HydroCouple::SDK::IO::MeshDefinition{};
+    definition.meshName = "mesh2d";
+
+    bed.clear();
+
+    const size_t count = m_active.size();
+    const size_t lanes = static_cast<size_t>(lateralCells);
+
+    // Along-channel walk, identical to toMeshDefinition(): PHI0 is clockwise
+    // from north, so the along-channel unit vector is (sin, cos).
+    std::vector<double> centreX(count + 1, 0.0);
+    std::vector<double> centreY(count + 1, 0.0);
+    std::vector<double> normalX(count + 1, 0.0);
+    std::vector<double> normalY(count + 1, 0.0);
+
+    double x = 0.0;
+    double y = 0.0;
+
+    for (size_t j = 0; j <= count; ++j)
+    {
+        const size_t segment = std::min(j, count - 1);
+        const double phi     = m_orientation[static_cast<size_t>(m_active[segment])];
+
+        const double dx = std::sin(phi);
+        const double dy = std::cos(phi);
+
+        centreX[j] = x;
+        centreY[j] = y;
+        normalX[j] = -dy;
+        normalY[j] = dx;
+
+        if (j < count)
+        {
+            x += dx * m_length[static_cast<size_t>(m_active[segment])];
+            y += dy * m_length[static_cast<size_t>(m_active[segment])];
+        }
+    }
+
+    for (size_t j = 0; j <= count; ++j)
+    {
+        double half = 0.0;
+
+        if (j == 0)
+            half = 0.5 * surfaceWidth(m_active[0]);
+        else if (j == count)
+            half = 0.5 * surfaceWidth(m_active[count - 1]);
+        else
+            half = 0.25 * (surfaceWidth(m_active[j - 1]) + surfaceWidth(m_active[j]));
+
+        if (!(half > 0.0))
+        {
+            message = "segment " + std::to_string(m_active[std::min(j, count - 1)]) +
+                      " has no width at the initial water surface";
+            return false;
+        }
+
+        for (size_t l = 0; l <= lanes; ++l)
+        {
+            const double t      = static_cast<double>(l) / static_cast<double>(lanes);
+            const double offset = -half + 2.0 * half * t;
+
+            definition.nodeX.push_back(centreX[j] + offset * normalX[j]);
+            definition.nodeY.push_back(centreY[j] + offset * normalY[j]);
+        }
+    }
+
+    definition.faceNodeOffsets.push_back(0);
+
+    const auto node = [&](size_t j, size_t l) {
+        return static_cast<int64_t>(j * (lanes + 1) + l);
+    };
+
+    for (size_t j = 0; j < count; ++j)
+    {
+        const int    segment = m_active[j];
+        const double halfTop = 0.5 * surfaceWidth(segment);
+
+        for (size_t l = 0; l < lanes; ++l)
+        {
+            definition.faceNodes.push_back(node(j, l));
+            definition.faceNodes.push_back(node(j + 1, l));
+            definition.faceNodes.push_back(node(j + 1, l + 1));
+            definition.faceNodes.push_back(node(j, l + 1));
+
+            definition.faceNodeOffsets.push_back(
+                static_cast<int64_t>(definition.faceNodes.size()));
+
+            // This lane's span, in the segment's own coordinates.
+            const double a = -halfTop + 2.0 * halfTop * static_cast<double>(l) /
+                                            static_cast<double>(lanes);
+            const double b = -halfTop + 2.0 * halfTop * static_cast<double>(l + 1) /
+                                            static_cast<double>(lanes);
+
+            // The bed is the lowest layer whose section still reaches this lane.
+            // An outer lane therefore sits higher than a central one, which is
+            // the cross-section shape a laterally averaged column cannot hold.
+            double lowest = m_initialSurface[static_cast<size_t>(segment)];
+
+            for (int k = 0; k < layerCount(); ++k)
+            {
+                if (lateralOverlap(a, b, 0.5 * width(k, segment)) > 0.0)
+                    lowest = std::min(lowest, layerBottom(k));
+            }
+
+            bed.push_back(lowest);
+        }
+    }
+
+    message.clear();
+    return true;
+}
+
+bool W2Bathymetry::applyLateralHypsography(Mesh::LayeredMesh &mesh, int lateralCells,
+                                           std::string &message) const
+{
+    if (lateralCells < 1)
+    {
+        message = "lateralCells must be at least 1";
+        return false;
+    }
+
+    const size_t lanes    = static_cast<size_t>(lateralCells);
+    const size_t expected = m_active.size() * lanes;
+
+    if (static_cast<size_t>(mesh.columnCount()) != expected)
+    {
+        message = "the mesh has " + std::to_string(mesh.columnCount()) +
+                  " columns but " + std::to_string(m_active.size()) +
+                  " active segments at " + std::to_string(lateralCells) +
+                  " cells wide needs " + std::to_string(expected);
+        return false;
+    }
+
+    for (size_t j = 0; j < m_active.size(); ++j)
+    {
+        const int    segment = m_active[j];
+        const double halfTop = 0.5 * surfaceWidth(segment);
+        const double length  = m_length[static_cast<size_t>(segment)];
+
+        for (size_t l = 0; l < lanes; ++l)
+        {
+            const double a = -halfTop + 2.0 * halfTop * static_cast<double>(l) /
+                                            static_cast<double>(lanes);
+            const double b = -halfTop + 2.0 * halfTop * static_cast<double>(l + 1) /
+                                            static_cast<double>(lanes);
+
+            std::vector<double> elevation;
+            std::vector<double> area;
+
+            // Layer midpoints, deepest first, exactly as applyHypsography does
+            // and for the same reason: the integral of a linear interpolant over
+            // a layer is its midpoint value times the thickness, so each layer's
+            // volume comes out exact.
+            for (int k = layerCount() - 1; k >= 0; --k)
+            {
+                const double overlap = lateralOverlap(a, b, 0.5 * width(k, segment));
+
+                if (overlap <= 0.0)
+                    continue;
+
+                const double bottom = layerBottom(k);
+                const double middle =
+                    bottom + 0.5 * m_layerHeight[static_cast<size_t>(k)];
+
+                const double planArea = overlap * length;
+
+                if (!elevation.empty() && planArea < area.back())
+                {
+                    elevation.push_back(middle);
+                    area.push_back(area.back());
+                    continue;
+                }
+
+                elevation.push_back(middle);
+                area.push_back(planArea);
+            }
+
+            if (elevation.size() < 2)
+            {
+                message = "segment " + std::to_string(segment) + " lane " +
+                          std::to_string(l) +
+                          " has fewer than two wetted layers, so it has no storage "
+                          "curve; try fewer lateral cells";
+                return false;
+            }
+
+            const int64_t column = static_cast<int64_t>(j * lanes + l);
+
+            if (!mesh.setHypsography(column, elevation, area, message))
+                return false;
+        }
     }
 
     message.clear();

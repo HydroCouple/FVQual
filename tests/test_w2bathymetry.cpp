@@ -544,3 +544,125 @@ TEST(W2VerticalProfile, TheInitialProfileConfirmsTheVerticalDatum)
     EXPECT_FALSE(profile.profile("DO").empty());
     EXPECT_EQ(profile.profile("DO").size(), temperature.size());
 }
+
+TEST(W2Bathymetry, WideningDeGrayLaterallyHoldsTheSameWater)
+{
+    // The gate that makes a 2-D DeGray the *same reservoir* rather than a
+    // different one. Lateral expansion invents no bathymetry: each lane's plan
+    // area at an elevation is its share of the section's width there, and the
+    // shares sum to the whole width. So the volume must not move at all — not
+    // approximately, but to the precision the storage integral itself carries.
+    //
+    // If this drifts with lane count, the expansion is redistributing water
+    // instead of dividing it, and every comparison built on it would be
+    // measuring the mesh rather than the physics.
+    if (!haveDeGray())
+        GTEST_SKIP() << "DeGray bathymetry not available";
+
+    W2Bathymetry bathymetry;
+    std::string  message;
+
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
+
+    const double reference = bathymetry.volumeAt(123.8);
+
+    double singleLane = 0.0;
+
+    for (int lanes : {1, 2, 4, 8})
+    {
+        HydroCouple::SDK::IO::MeshDefinition definition;
+        std::vector<double>                  bed;
+
+        ASSERT_TRUE(bathymetry.toLateralMeshDefinition(lanes, definition, bed, message))
+            << "lanes " << lanes << ": " << message;
+
+        HorizontalMesh horizontal;
+        ASSERT_TRUE(horizontal.build(definition, message)) << message;
+
+        ASSERT_EQ(horizontal.faceCount(), 30 * lanes) << "lanes " << lanes;
+
+        for (int64_t f = 0; f < horizontal.faceCount(); ++f)
+            horizontal.faceBed()[static_cast<size_t>(f)] = bed[static_cast<size_t>(f)];
+
+        SigmaSpec spec;
+        spec.layerCount        = 30;
+        spec.minLayerThickness = 0.0;
+
+        LayeredMesh layered;
+        ASSERT_TRUE(layered.build(horizontal, spec, 123.8, message))
+            << "lanes " << lanes << ": " << message;
+
+        ASSERT_TRUE(bathymetry.applyLateralHypsography(layered, lanes, message))
+            << "lanes " << lanes << ": " << message;
+
+        const std::vector<double> surface(
+            static_cast<size_t>(layered.columnCount()), 123.8);
+        ASSERT_TRUE(layered.updateSurface(surface, message)) << message;
+
+        const double modelled = layered.totalVolume();
+
+        // Against W2's own cell arithmetic, at the same 0.2% the one-column
+        // gate holds to: the lateral split must not cost more than the
+        // sampling already does.
+        EXPECT_NEAR(modelled, reference, 0.002 * reference)
+            << "lanes " << lanes << ": " << modelled << " against " << reference;
+
+        if (lanes == 1)
+            singleLane = modelled;
+        else
+            // And against the one-lane mesh far more tightly, because that
+            // comparison has no sampling difference in it at all — only the
+            // lateral division, which is exact arithmetic.
+            EXPECT_NEAR(modelled, singleLane, 1.0e-6 * singleLane)
+                << "lanes " << lanes << " drifted from the single-lane volume";
+    }
+}
+
+TEST(W2Bathymetry, LateralExpansionGivesOuterLanesAHigherBed)
+{
+    // The point of the expansion. A laterally averaged column has one bed for
+    // the whole section; a real section is deep in the middle and shallow at the
+    // margins. If every lane came out with the same bed, the mesh would be wider
+    // without being any more three-dimensional, and the comparison it exists to
+    // support would be worthless.
+    if (!haveDeGray())
+        GTEST_SKIP() << "DeGray bathymetry not available";
+
+    W2Bathymetry bathymetry;
+    std::string  message;
+
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
+
+    constexpr int kLanes = 8;
+
+    HydroCouple::SDK::IO::MeshDefinition definition;
+    std::vector<double>                  bed;
+
+    ASSERT_TRUE(bathymetry.toLateralMeshDefinition(kLanes, definition, bed, message))
+        << message;
+
+    // The deepest segment, where the section shape is most pronounced.
+    size_t deepestSegment = 0;
+    double deepest        = 0.0;
+
+    for (size_t j = 0; j < bathymetry.activeSegments().size(); ++j)
+    {
+        const double middle = bed[j * kLanes + kLanes / 2];
+
+        if (deepest == 0.0 || middle < deepest)
+        {
+            deepest        = middle;
+            deepestSegment = j;
+        }
+    }
+
+    const double centre = bed[deepestSegment * kLanes + kLanes / 2];
+    const double edge   = bed[deepestSegment * kLanes];
+
+    EXPECT_GT(edge, centre) << "the outer lane is not shallower than the centre, so "
+                               "the section has no shape";
+
+    // Symmetric about the centreline, because the width curve is.
+    EXPECT_NEAR(bed[deepestSegment * kLanes],
+                bed[deepestSegment * kLanes + kLanes - 1], 1.0e-9);
+}

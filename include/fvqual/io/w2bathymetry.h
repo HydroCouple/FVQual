@@ -183,7 +183,66 @@ public:
     [[nodiscard]] bool applyHypsography(Mesh::LayeredMesh &mesh,
                                         std::string &message) const;
 
+    /*!
+     * \brief Lays the same reservoir out \p lateralCells wide instead of one.
+     *
+     * **Why this exists.** CE-QUAL-W2 is laterally averaged, so a model built
+     * from it is one segment wide and every return path is forced through the
+     * vertical. DeGray's residual interior warm bias of +3 to +4 °C is suspected
+     * to be that schematisation rather than the physics: a synthetic basin under
+     * the same wind transports 39% less heat below 20 m at eight cells wide.
+     * That test used a made-up basin. This one uses DeGray.
+     *
+     * **No new bathymetry is invented.** `width(layer, segment)` already carries
+     * the lateral information — it is the section's width at each elevation.
+     * Cell `l` of a segment is given the lateral span
+     *
+     *     [ -H0 + 2 H0 l/L , -H0 + 2 H0 (l+1)/L ]
+     *
+     * where `H0` is the segment's half-width at its initial surface, and its
+     * plan area at elevation `z` is `DLX` times that span's overlap with
+     * `[-W(z)/2, +W(z)/2]`. The overlaps sum to `W(z)` exactly, so the expanded
+     * mesh holds **the same volume at every stage** as the one-column chain. The
+     * cross-section shape falls out of the curve: cells near the centreline stay
+     * wet to the bed, outer cells dry out partway up, which is what a real
+     * section does and what a single averaged column cannot represent.
+     *
+     * A column's bed is the lowest elevation at which its span still overlaps
+     * the section at all.
+     *
+     * Columns are ordered segment-major: `segment * lateralCells + lateral`, so
+     * `applyLateralHypsography()` must be given the same \p lateralCells.
+     *
+     * \param[in]  lateralCells Cells across the channel (>= 1). 1 reproduces
+     *                          toMeshDefinition()'s topology.
+     * \param[out] definition   Mesh for HorizontalMesh::build().
+     * \param[out] bed          Bed elevation per column (m).
+     * \param[out] message      Failure description when returning false.
+     */
+    [[nodiscard]] bool toLateralMeshDefinition(
+        int lateralCells, HydroCouple::SDK::IO::MeshDefinition &definition,
+        std::vector<double> &bed, std::string &message) const;
+
+    /*!
+     * \brief The storage curves for a mesh built by toLateralMeshDefinition().
+     *
+     * \param[in,out] mesh         Layered mesh built on that definition.
+     * \param[in]     lateralCells The same count passed to the builder.
+     * \param[out]    message      Failure description when returning false.
+     */
+    [[nodiscard]] bool applyLateralHypsography(Mesh::LayeredMesh &mesh,
+                                               int lateralCells,
+                                               std::string &message) const;
+
 private:
+    /*!
+     * \brief Width of \p segment at its initial water surface (m).
+     *
+     * The plan geometry the model runs at. Falls back to the widest layer when
+     * the surface sits above every wetted one.
+     */
+    [[nodiscard]] double surfaceWidth(int segment) const;
+
     std::vector<double> m_length;
     std::vector<double> m_orientation;
     std::vector<double> m_friction;
