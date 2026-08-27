@@ -838,6 +838,81 @@ double BarotropicSolver::storageVolume(int64_t column, double eta, double fallba
     return total;
 }
 
+double BarotropicSolver::conveyanceDepth(int64_t column, double eta, double fallback,
+                                         double bedLevel) const noexcept
+{
+    const double depth = eta - bedLevel;
+
+    if (depth <= 0.0)
+        return 0.0;
+
+    // No curve: the column is a prism and its conveyance depth is its depth.
+    if (!m_hasHypsography || m_storage.empty() ||
+        m_storage[static_cast<size_t>(column)].elevation.empty())
+    {
+        return depth;
+    }
+
+    const StorageCurve &curve = m_storage[static_cast<size_t>(column)];
+
+    const double surface = storageArea(column, eta, fallback);
+
+    if (surface <= 0.0)
+        return depth;
+
+    // INTEGRAL (eta - z)^{5/3} dA. Walked segment by segment over the curve's
+    // own breakpoints, as storageVolume does, so a kink is never straddled by a
+    // single interval — the error there survives any amount of refinement.
+    constexpr double kExponent = 5.0 / 3.0;
+
+    double integral = 0.0;
+
+    // The area at or below the bed conveys at the full depth: it is the part of
+    // the section that is there at every stage, and omitting it would make a
+    // prism-with-a-curve differ from a prism.
+    const double bedArea = storageArea(column, bedLevel, fallback);
+    integral += std::pow(depth, kExponent) * bedArea;
+
+    double at = std::max(bedLevel, curve.elevation.front());
+
+    while (at < eta)
+    {
+        double next = eta;
+
+        const auto above =
+            std::upper_bound(curve.elevation.begin(), curve.elevation.end(), at);
+
+        if (above != curve.elevation.end() && *above < next)
+            next = *above;
+
+        const double dArea =
+            storageArea(column, next, fallback) - storageArea(column, at, fallback);
+
+        if (dArea > 0.0)
+        {
+            // Depth over the slice, at its midpoint. The width is constant
+            // within a segment because the curve is piecewise linear, so the
+            // midpoint is the exact average of a linear factor and a good
+            // approximation of the 5/3 power over one segment.
+            const double midDepth = eta - 0.5 * (at + next);
+
+            if (midDepth > 0.0)
+                integral += std::pow(midDepth, kExponent) * dArea;
+        }
+
+        at = next;
+    }
+
+    if (integral <= 0.0)
+        return depth;
+
+    const double effective = std::pow(integral / surface, 3.0 / 5.0);
+
+    // A conveyance depth deeper than the water is not a thing; clamp rather
+    // than let a curve with a numerical wobble hand momentum a bad number.
+    return std::min(effective, depth);
+}
+
 double BarotropicSolver::stageFromStorage(int64_t column, double volume, double fallback,
                                           double bedLevel) const noexcept
 {

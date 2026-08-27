@@ -632,6 +632,51 @@ private:
     //! Stage holding \p volume above the bed (m) — the inverse of the above.
     [[nodiscard]] double stageFromStorage(int64_t column, double volume, double fallback,
                                           double bedLevel) const noexcept;
+
+public:
+    /*!
+     * \brief Effective conveyance depth of \p column at stage \p eta (m).
+     *
+     * **The problem this answers (F1.5, task 83).** Hypsography corrects
+     * *storage*: a column that narrows with depth holds less water than a prism
+     * on its surface area, and since F1.5 the volume is right. Momentum was
+     * left behind. Manning's drag goes as `h^(-4/3)`, and the single depth it
+     * is handed is the storage depth `V/A` — a section-average that mixes the
+     * deep channel with the shallow margins. The margins hold water without
+     * conveying much of it, so averaging them in over-estimates friction on the
+     * part of the section that actually carries the flow.
+     *
+     * **The derivation, which has no free parameter.** Manning conveyance for a
+     * wide section goes as `width * h^{5/3}`. Integrating that over the
+     * hypsographic curve and asking what single depth would give the same total
+     * conveyance across the same surface area:
+     *
+     *     h_c = [ (1/A(eta)) * INTEGRAL_bed^eta (eta - z)^{5/3} dA/dz dz ]^{3/5}
+     *
+     * `dA/dz` is the width of the slice at elevation z, and `(eta - z)` is the
+     * water depth over it. Nothing is fitted; the shape of the curve decides
+     * the answer. The two limits are the check that it means what it says:
+     *
+     * - A **prismatic** column has all its area at the bed, so the integral
+     *   collapses to `(eta - bed)^{5/3}` and `h_c` is the full depth exactly.
+     *   Existing models without a curve are therefore untouched.
+     * - A **triangular** column, area growing linearly from the bed, gives
+     *   `h_c = (3/8)^{3/5} * depth ~ 0.566 * depth`, while its storage depth is
+     *   half the depth. Deeper than the storage average, shallower than the
+     *   maximum, which is where a conveyance depth belongs.
+     *
+     * Returns the storage depth when the column has no curve, so this is safe
+     * to call unconditionally.
+     *
+     * \param[in] column    Column index.
+     * \param[in] eta       Free-surface elevation (m).
+     * \param[in] fallback  Constant plan area for a column with no curve (m²).
+     * \param[in] bedLevel  Bed elevation (m).
+     */
+    [[nodiscard]] double conveyanceDepth(int64_t column, double eta, double fallback,
+                                         double bedLevel) const noexcept;
+
+private:
     std::vector<double> m_boundaryFlux;
 
     /*!
