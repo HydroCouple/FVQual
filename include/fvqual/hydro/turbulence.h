@@ -8,19 +8,28 @@
  * \brief  Two-equation k-epsilon vertical mixing (F5.4).
  *
  * **Why this exists, measured rather than assumed.** Richardson damping was the
- * mixing scheme through Phase 3, and against DeGray's 24 observed casts it has
- * no middle setting:
+ * mixing scheme through Phase 3. Against DeGray's measured casts, matched runs
+ * to day 150 at 30 layers, 333 measurements, overall RMSE:
  *
- * | | overall RMSE | 5-10 m | 20-30 m |
- * |---|---|---|---|
- * | no wind stress | 2.42 °C | −3.48 | +0.84 |
- * | wind stress on | 8.35 °C | −0.29 | **+8.60** |
+ * | | overall | 5-10 m | 20-30 m | 30-60 m |
+ * |---|---|---|---|---|
+ * | no wind stress | **2.29 °C** | −3.91 | −0.83 | −0.55 |
+ * | Richardson + wind | 3.59 °C | −1.11 | +3.22 | +3.65 |
+ * | k-epsilon + wind | **3.42 °C** | −1.23 | +2.95 | +3.39 |
  *
- * `Ri = N²/max(shear, 1e-12)` with nothing driving the surface is enormous, so
- * the eddy diffusivity sits at its background 1e-7 and the scheme mixes nothing
- * — a 3 m epilimnion against a measured 14 m. Supply the shear that was missing
- * and the same scheme mixes the column out, warming the hypolimnion by 8 °C.
- * Turning one knob moves the error from one end of the column to the other.
+ * Wind stress is what fixes the epilimnion: the 5-10 m band goes from −3.91 to
+ * −1.11, and without it the modelled April surface layer is 3 m against a
+ * measured 14 m. What wind then costs is the interior, which both schemes
+ * over-mix by 3 to 4 °C.
+ *
+ * The closure is a modest improvement over Richardson damping, better in every
+ * band below 10 m and 5% better overall. **An earlier version of this comment
+ * claimed the opposite** — that the closure was worse, 8.95 °C against 8.35 —
+ * and that comparison was invalid: both runs predated the fix to the vertical
+ * Courant limit and were spending their time at the time-step floor. The
+ * lesson is the measurement's, not the closure's: a comparison between two
+ * schemes is only worth its numbers if the model underneath is stepping
+ * correctly.
  *
  * The missing physics is a *memory*. Richardson damping is diagnostic: mixing
  * is a function of the local gradients right now, so a stirred surface layer
