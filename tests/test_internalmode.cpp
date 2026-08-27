@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -912,4 +913,148 @@ TEST(InternalMode, AGustOverAStratifiedTaperingReservoirDoesNotDrainAColumn)
     blow(12.1, 10800.0);
     blow(2.3, 10800.0);
     blow(0.0, 21600.0);
+}
+
+// ── Wind-driven overturning: does width give the return flow somewhere to go ──
+
+namespace {
+
+/*!
+ * \brief Runs a stratified basin under steady wind and reports how much the
+ *        bottom layer warms.
+ *
+ * \param ny Cells across the basin. One reproduces a laterally-averaged
+ *           schematisation; more gives a lateral return path.
+ */
+double bedWarmingUnderWind(int ny)
+{
+    constexpr int    kNx     = 24;
+    constexpr int    kLayers = 16;
+    constexpr double kLength = 6000.0;
+    constexpr double kWidth  = 1200.0;
+    constexpr double kDepth  = 40.0;
+
+    HorizontalMesh horizontal;
+    std::string    message;
+
+    EXPECT_TRUE(horizontal.build(Testing::basinGrid(kNx, ny, kLength, kWidth), message))
+        << message;
+
+    for (int64_t f = 0; f < horizontal.faceCount(); ++f)
+        horizontal.faceBed()[static_cast<size_t>(f)] = -kDepth;
+
+    SigmaSpec spec;
+    spec.layerCount        = kLayers;
+    spec.minLayerThickness = 0.0;
+
+    LayeredMesh layered;
+    EXPECT_TRUE(layered.build(horizontal, spec, 0.0, message)) << message;
+
+    SpeciesRegistry registry;
+    EXPECT_GE(registry.addTemperature(10.0, message), 0) << message;
+
+    const int temperature = registry.temperatureIndex();
+
+    StateStore state;
+    state.allocate(layered, registry);
+
+    // A sharp thermocline at 10 m: warm above, cold below, as a summer
+    // reservoir has and as the measured DeGray casts show.
+    for (int64_t c = 0; c < layered.columnCount(); ++c)
+    {
+        for (int k = 0; k < kLayers; ++k)
+        {
+            const double z = 0.5 * (layered.z(c, k) + layered.z(c, k + 1));
+
+            state.speciesAt(temperature, layered.cell(c, k)) = z > -10.0 ? 26.0 : 8.0;
+        }
+    }
+
+    InternalModeOptions options = quietOptions();
+    options.manningN    = 0.03;
+    options.maxTimeStep = 120.0;
+
+    InternalModeSolver solver;
+    EXPECT_TRUE(solver.initialize(layered, state, registry, options, message)) << message;
+
+    solver.enableMeteorology(/*attenuation=*/0.45);
+
+    // Wind only: no heat exchange, so anything that reaches the bed got there
+    // by transport rather than by the surface budget.
+    FVQual::Hydro::Meteorology weather;
+    weather.airTemperature = 10.0;
+    weather.dewPoint       = 10.0;
+    weather.cloudCover     = 1.0;
+    weather.shortwave      = 0.0;
+    weather.windSpeed      = 9.0;
+    weather.windDirection  = 0.0;
+
+    solver.meteorology() = weather;
+
+    // Four simulated days. The bottom *layer* alone barely moves in a day, so
+    // an earlier version of this measured 0.01 °C and could not tell the cases
+    // apart; the signal is in the whole body below the thermocline, and it needs
+    // time to develop.
+    for (int step = 0; step < 3000; ++step)
+    {
+        const double dt = std::min(solver.stableTimeStep(), 120.0);
+
+        EXPECT_TRUE(solver.step(dt, message)) << message;
+    }
+
+    // Volume-weighted mean below 20 m — twice the thermocline depth, so every
+    // degree here is heat that was carried down past it. Started at 8.0.
+    double heat   = 0.0;
+    double volume = 0.0;
+
+    for (int64_t c = 0; c < layered.columnCount(); ++c)
+    {
+        for (int k = 0; k < kLayers; ++k)
+        {
+            const double z = 0.5 * (layered.z(c, k) + layered.z(c, k + 1));
+
+            if (z > -20.0)
+                continue;
+
+            const size_t cell = static_cast<size_t>(layered.cell(c, k));
+            const double v    = layered.cellVolume()[cell];
+
+            heat += v * state.speciesAt(temperature, static_cast<int64_t>(cell));
+            volume += v;
+        }
+    }
+
+    return volume > 0.0 ? heat / volume - 8.0 : 0.0;
+}
+
+} // namespace
+
+/*!
+ * \brief A basin one cell wide overturns harder than one with width.
+ *
+ * DeGray's residual interior warm bias is advective: switching turbulent mixing
+ * off makes it *worse* (5.87 °C against 3.42), so heat is reaching the
+ * hypolimnion by being carried there, not mixed there. The suspicion is the
+ * schematisation rather than the model — W2 is laterally averaged, so DeGray's
+ * mesh is a chain one segment wide, and a wind-driven gyre that would close
+ * laterally in a real basin has nowhere to go but down.
+ *
+ * DeGray cannot test that by construction. This can: the same basin, the same
+ * wind, the same stratification, varying only the number of cells across.
+ */
+TEST(InternalMode, ALaterallyAveragedBasinOverturnsHarderThanAWideOne)
+{
+    const double narrow = bedWarmingUnderWind(1);
+    const double wide   = bedWarmingUnderWind(8);
+
+    // Both must transport *some* heat down — a basin that does nothing under
+    // 9 m/s of wind would make the comparison vacuous.
+    std::printf("  below-20 m warming: one cell %.4f C, eight cells %.4f C (%.0f%% less)\n",
+                narrow, wide, 100.0 * (1.0 - wide / narrow));
+
+    EXPECT_GT(narrow, 0.005) << "the one-cell basin did not overturn at all";
+
+    EXPECT_LT(wide, narrow)
+        << "width did not reduce the downward heat transport: narrow " << narrow
+        << " °C against wide " << wide << " °C";
 }

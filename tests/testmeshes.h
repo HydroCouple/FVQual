@@ -140,6 +140,56 @@ inline HydroCouple::SDK::IO::MeshDefinition channelStrip(int columns, double len
     return mesh;
 }
 
+/*!
+ * \brief A rectangular basin of \p nx by \p ny quads.
+ *
+ * The channel strip above is one cell wide, which is the right domain for the
+ * 1-D analytical benchmarks and the wrong one for anything that circulates. A
+ * wind-driven overturning cell in a one-cell-wide chain has no lateral return
+ * path, so every return flow is forced through the vertical — which is exactly
+ * the suspicion hanging over DeGray's interior warm bias, and exactly what a
+ * laterally-averaged schematisation cannot be used to test.
+ *
+ * Cell centres sit at ((i + 1/2) dx, (j + 1/2) dy).
+ */
+inline HydroCouple::SDK::IO::MeshDefinition basinGrid(int nx, int ny, double length,
+                                                      double width)
+{
+    HydroCouple::SDK::IO::MeshDefinition mesh;
+    mesh.meshName = "mesh2d";
+
+    const double dx = length / static_cast<double>(nx);
+    const double dy = width / static_cast<double>(ny);
+
+    const auto node = [&](int i, int j) { return j * (nx + 1) + i; };
+
+    for (int j = 0; j <= ny; ++j)
+    {
+        for (int i = 0; i <= nx; ++i)
+        {
+            mesh.nodeX.push_back(static_cast<double>(i) * dx);
+            mesh.nodeY.push_back(static_cast<double>(j) * dy);
+        }
+    }
+
+    mesh.faceNodeOffsets.push_back(0);
+
+    for (int j = 0; j < ny; ++j)
+    {
+        for (int i = 0; i < nx; ++i)
+        {
+            mesh.faceNodes.push_back(node(i, j));
+            mesh.faceNodes.push_back(node(i + 1, j));
+            mesh.faceNodes.push_back(node(i + 1, j + 1));
+            mesh.faceNodes.push_back(node(i, j + 1));
+
+            mesh.faceNodeOffsets.push_back(static_cast<int64_t>(mesh.faceNodes.size()));
+        }
+    }
+
+    return mesh;
+}
+
 } // namespace FVQual::Testing
 
 #endif // FVQual_TESTS_TESTMESHES_H
