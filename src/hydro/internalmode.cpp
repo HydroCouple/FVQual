@@ -558,12 +558,26 @@ double InternalModeSolver::stableTimeStep() const
             if (thickness <= 0.0)
                 continue;
 
-            const double top =
-                std::abs(m_verticalFlux[static_cast<size_t>(mesh.interfaceSlot(c, k))]);
-            const double bottom = std::abs(
-                m_verticalFlux[static_cast<size_t>(mesh.interfaceSlot(c, k + 1))]);
+            // m_verticalFlux is volumeFlux/planArea, which is the true vertical
+            // velocity only where the interface area equals the plan area. Under
+            // hypsography DeGray's near-bed interfaces are as little as 0.8% of
+            // it, so the stored value understates the real velocity by up to
+            // 125x and this limit under-restricts by the same factor. Convert
+            // before comparing: what the Courant condition cares about is how
+            // fast water actually crosses the interface.
+            const double planArea =
+                mesh.horizontal().faceArea()[static_cast<size_t>(c)];
 
-            const double speed = std::max(top, bottom);
+            const auto crossing = [&](int interface) {
+                const size_t slot = static_cast<size_t>(mesh.interfaceSlot(c, interface));
+                const double face = mesh.interfaceArea()[slot];
+
+                const double ratio = face > 0.0 ? planArea / face : 1.0;
+
+                return std::abs(m_verticalFlux[slot]) * ratio;
+            };
+
+            const double speed = std::max(crossing(k), crossing(k + 1));
 
             if (speed > 0.0)
             {
