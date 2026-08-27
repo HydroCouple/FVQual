@@ -32,6 +32,7 @@ add_library(fvqual_core
     io/w2timeseries.cpp
     io/ugridreader.cpp
     io/layeredugridwriter.cpp
+    component/sigmaverticalcoordinate.cpp
     capi/capi_engine.cpp
     capi/capi_mesh.cpp
     capi/capi_sim.cpp

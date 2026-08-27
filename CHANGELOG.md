@@ -6,6 +6,49 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — F8.2c–e, coupling semantics carried across the boundary
+
+Three interfaces added upstream to HydroCouple, all optional and discovered by
+`dynamic_cast` rather than added to existing interfaces: these headers cross a
+plugin boundary, and a new virtual on an interface changes a vtable that
+already-compiled components — `CEQUALW2Component` among them — were built
+against.
+
+- `IValueSemantics` / `ValueKind` (F8.2c) — intensive, extensive, flux, density.
+- `ITemporalSemantics` / `TimeKind` (F8.2d) — instantaneous, interval mean, min,
+  max, accumulated, with the interval length.
+- `IVerticalCoordinate` / `VerticalCoordinateKind` (F8.2e) — sigma, z-level,
+  z-star, hybrid, isopycnal, depth-below-surface. `ILayeredMeshComponentDataItem`
+  moved upstream alongside it and now carries a vertical coordinate rather than
+  three CF formula terms.
+
+All three default to `Unknown`, and each header states that a consumer must not
+guess from it. An `Unknown` that quietly meant "instantaneous" would recreate the
+problem the enum exists to solve. The motivating defects are this project's own:
+cloud cover in tenths read as a fraction, and a daily report drifting from noon
+to five in the afternoon — both two sides disagreeing about what a number meant.
+
+- **The vertical coordinate answers with elevations, not formula terms.**
+  Publishing terms is right for a file, where a reader implements a handful of CF
+  formulae once. At a coupling boundary it obliges every partner to redo the
+  arithmetic, and a partner that gets the signs wrong produces a plausible
+  profile and no error at all.
+- `Component::SigmaVerticalCoordinate` implements it over `LayeredMesh`,
+  delegating to the mesh's own `z(column, k)` rather than rederiving
+  `eta + sigma·(bed − eta)`. That distinction is not cosmetic: with a minimum
+  layer thickness enforced, `SigmaGridGenerator` lifts thin layers to the floor
+  and takes the surplus from the thick ones, and on a shoaling arm the naive
+  formula puts the top layer's base at −0.006 m where the mesh has it at
+  −0.10 m — a sixteenfold error in the surface layer, which is the one a partner
+  reads surface temperature from.
+- Eight gates, all written through the `IVerticalCoordinate` base so they assert
+  only what a partner can rely on. Each was confirmed to fail under ablation.
+  The gate pinning the delegation initially used uniform layering, measured a
+  disagreement of 3.6e-15, and failed rather than passing: under uniform sigma
+  the thickness floor binds on every layer at once or none, so the mechanism it
+  claimed to test was never engaged. It now uses stretched layering and the
+  comment records why.
+
 ### Added — F3.7 spatially varying forcing and F5.4 turbulence closure
 
 - `Forcing::ForcingField` holds either one value or a vector, so meteorological
