@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — F1.5 conveyance: momentum reconciled with the hypsographic depth
+
+Hypsography corrected *storage* in F1.5; momentum was left behind. Manning's drag
+goes as `h^(-4/3)`, and the depth it was handed is `m_h = eta − bed`, the depth at
+the column's **deepest point**. Almost none of a natural section is that deep, so
+using it under-estimates friction, and worst where the hypsography is steepest.
+
+- `BarotropicSolver::conveyanceDepth()` — the single depth carrying the section's
+  actual conveyance, derived from the existing storage curve with **no free
+  parameter**: `h_c = [(1/A) ∫ (eta − z)^{5/3} dA]^{3/5}`, the compound-section
+  conveyance integral. A prismatic column returns its full depth exactly, so
+  models without a curve are bit-for-bit unchanged. The three depths order as
+  `V/A < h_c < h_max`, and the correction moves momentum from the top of that
+  range to the middle. For DeGray's shape `h_c ≈ 0.39 H`, so the drag coefficient
+  rises about fourfold. **This is not a small change**, and any hypsographic
+  result predating it will move.
+- Wired into the Manning term only. Continuity, the pressure gradient and the
+  wave speeds still see `m_h`, because those depend on how much water is present
+  and where its surface is, not on how well the section carries it.
+
+**A correction to the first commit of this work.** Its header claimed the depth
+handed to Manning was the storage average `V/A`, and concluded the code
+*over*-estimated friction. `m_h` is the maximum depth, so the sign was backwards:
+the code under-estimated it, and the fix increases drag rather than reducing it.
+Found by reading how `m_h` is actually assigned instead of trusting the comment.
+
+Eight gates. The two shapes with closed forms are checked against the Euler beta
+function via `tgamma` — a different route from the quadrature under test. Three
+ablations fail them: the 5/3 exponent replaced by 1, the bed-area term dropped,
+and the friction wiring reverted. That last one is the informative one: with it
+reverted, a shelved basin and a prismatic one produce **bit-identical** speeds,
+which is the defect stated as a measurement.
+
 ### Investigated — the vertical Courant "self-reference" does not reproduce
 
 Carried as an open defect: `diagnoseVerticalFlux` closes layer continuity with

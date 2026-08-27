@@ -222,6 +222,62 @@ TEST(Conveyance, ConveyanceDepthRisesWithStage)
     }
 }
 
+TEST(Conveyance, AShelvedColumnFeelsMoreFrictionThanAPrismaticOne)
+{
+    // F1.5b. The whole suite passed unchanged when the friction term was
+    // switched to the conveyance depth, which means nothing existing exercises
+    // friction on a hypsographic column. This is that gate.
+    //
+    // Two basins alike in every respect except the storage curve, driven by the
+    // same wind for the same time. The curved one conveys at h_c rather than at
+    // its maximum depth, so Manning bites harder and it ends up slower.
+    const auto peakSpeedAfterWind = [](bool withCurve) {
+        Basin basin;
+        makeBasin(basin);
+
+        if (withCurve)
+            setShapedCurve(basin, 2.0);
+
+        std::string message;
+
+        const std::vector<double> flat(static_cast<size_t>(kColumns), kStage);
+        EXPECT_TRUE(basin.solver.setSurface(flat, message)) << message;
+
+        const std::vector<double> stressX(static_cast<size_t>(kColumns), 1.5);
+        const std::vector<double> stressY(static_cast<size_t>(kColumns), 0.0);
+        EXPECT_TRUE(basin.solver.setWindStress(stressX, stressY, message)) << message;
+
+        double peak = 0.0;
+
+        for (int i = 0; i < 200; ++i)
+        {
+            if (!basin.solver.step(1.0, message))
+                break;
+
+            for (int64_t c = 0; c < kColumns; ++c)
+            {
+                const size_t k = static_cast<size_t>(c);
+                peak = std::max(peak, std::hypot(basin.solver.velocityX()[k],
+                                                 basin.solver.velocityY()[k]));
+            }
+        }
+
+        return peak;
+    };
+
+    const double prismatic = peakSpeedAfterWind(false);
+    const double shelved   = peakSpeedAfterWind(true);
+
+    ASSERT_GT(prismatic, 0.0) << "the prismatic basin never moved, so there is "
+                                 "nothing to compare";
+
+    // The direction is the claim. The magnitude is not gated tightly because
+    // the curve changes storage as well as conveyance, so the two runs do not
+    // hold the same water and the ratio is not purely a friction ratio.
+    EXPECT_LT(shelved, prismatic)
+        << "prismatic " << prismatic << " m/s, shelved " << shelved << " m/s";
+}
+
 TEST(Conveyance, ADryOrInvertedColumnConveysNothing)
 {
     Basin basin;

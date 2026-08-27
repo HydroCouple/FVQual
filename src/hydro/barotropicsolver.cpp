@@ -1197,8 +1197,30 @@ void BarotropicSolver::applySourceTerms(double dt)
         // gives a strictly positive denominator, so friction can slow the
         // flow to a halt but never reverse it — the overshoot an explicit
         // treatment produces in thin water.
+        // F1.5b. `m_h` is the depth at the column's deepest point, and almost
+        // none of a natural section is that deep, so feeding it to Manning
+        // under-estimates friction. The conveyance depth is the single depth
+        // that carries the section's actual conveyance; see conveyanceDepth().
+        //
+        // Only friction here. Continuity, the pressure gradient and the wave
+        // speeds all still see `m_h`, because those depend on how much water is
+        // present and where its surface is, not on how well the section carries
+        // it. Landing one term at a time is what makes a regression
+        // attributable.
+        double frictionDepth = m_h[i];
+
+        if (m_hasHypsography)
+        {
+            const double effective =
+                conveyanceDepth(c, m_eta[i], m_mesh->faceArea()[i],
+                                m_eta[i] - m_h[i]);
+
+            if (effective > m_options.dryDepth)
+                frictionDepth = effective;
+        }
+
         const double drag = m_options.gravity * manning * manning * speed /
-                            std::pow(m_h[i], 4.0 / 3.0);
+                            std::pow(frictionDepth, 4.0 / 3.0);
 
         const double factor = 1.0 / (1.0 + dt * drag);
 

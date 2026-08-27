@@ -640,11 +640,18 @@ public:
      * **The problem this answers (F1.5, task 83).** Hypsography corrects
      * *storage*: a column that narrows with depth holds less water than a prism
      * on its surface area, and since F1.5 the volume is right. Momentum was
-     * left behind. Manning's drag goes as `h^(-4/3)`, and the single depth it
-     * is handed is the storage depth `V/A` — a section-average that mixes the
-     * deep channel with the shallow margins. The margins hold water without
-     * conveying much of it, so averaging them in over-estimates friction on the
-     * part of the section that actually carries the flow.
+     * left behind. Manning's drag goes as `h^(-4/3)`, and the depth it is handed
+     * is `m_h = eta - bed`, the depth at the column's *deepest point*. Almost
+     * none of a natural section is that deep. Using the maximum depth as though
+     * it were the whole section's therefore **under**-estimates friction, and
+     * under-estimates it worst exactly where the hypsography is steepest.
+     *
+     * The three depths line up as `V/A < h_c < h_max`, and the correction moves
+     * momentum from the top of that range to the middle. For a column whose area
+     * grows as the square of height above the bed — DeGray's shape — `h_c` is
+     * about `0.39 H` against `h_max = H`, so the drag coefficient rises by
+     * roughly `(1/0.39)^{4/3}`, a factor of four. This is not a small correction
+     * and it is not meant to be.
      *
      * **The derivation, which has no free parameter.** Manning conveyance for a
      * wide section goes as `width * h^{5/3}`. Integrating that over the
