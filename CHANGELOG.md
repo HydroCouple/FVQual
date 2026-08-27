@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added — F8.2c–e, coupling semantics carried across the boundary
+### Added — F8.2c–f, coupling semantics carried across the boundary
 
 Three interfaces added upstream to HydroCouple, all optional and discovered by
 `dynamic_cast` rather than added to existing interfaces: these headers cross a
@@ -48,6 +48,35 @@ to five in the afternoon — both two sides disagreeing about what a number mean
   the thickness floor binds on every layer at once or none, so the mechanism it
   claimed to test was never engaged. It now uses stretched layering and the
   comment records why.
+- `ICrossSection` / `CrossSectionKind` and `ILayeredNetworkComponentDataItem`
+  (F8.2f) — the W2 / HEC-RAS / SWMM shape: a network resolved vertically at each
+  station, with a channel section there. `ILayering` factored out of the mesh
+  item and shared with the network item, so a consumer wanting values by layer
+  with trustworthy elevations can `dynamic_cast` to it without learning whether
+  it was handed a 3-D mesh or a laterally-averaged network — which is the
+  FVQual-to-W2 exchange this hierarchy exists for.
+- **The cross-section answers derived quantities, not survey points**, for a
+  sharper reason than the vertical coordinate had: the three model families do
+  not store the same thing. HEC-RAS and SWMM hold station-elevation pairs;
+  CE-QUAL-W2 holds *width against elevation* and has no stations at all (see
+  `W2Bathymetry::width(layer, segment)`); a closed conduit has a formula and
+  neither. An interface built on points would have forced two of the three to
+  invent data they do not have.
+- `verification/interfaces/crosssection_agreement.cpp` implements the same
+  trapezoid in both representations and compares them against the closed form at
+  every stage from invert to top of bank. They agree to **3.6e-15**. Three
+  ablations confirmed it can fail: rectangular instead of trapezoidal
+  integration (64 failures), flow area collapsed onto storage area (1), and a
+  perimeter ignoring the bank slope (32). Kept out of `src/` deliberately —
+  FVQual is a 3-D mesh model and has no use for a cross-section class of its own.
+- Flow area and storage area are separate and provably not collapsible: on the
+  test section 48 of 80 m² conveys, 60%.
+- **The specification had a hole, and implementing it twice found it.** At
+  exactly the invert both implementations returned the bottom width for
+  `topWidth` and `wettedPerimeter` while the closed form said zero. The limit
+  from above is right — zero would hand a partner an infinity in `sqrt(gA/T)` at
+  the wet front — and `ICrossSection` now says so rather than leaving each
+  producer to decide.
 
 ### Added — F3.7 spatially varying forcing and F5.4 turbulence closure
 
