@@ -6,6 +6,62 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — F3.7 spatially varying forcing and F5.4 turbulence closure
+
+- `Forcing::ForcingField` holds either one value or a vector, so meteorological
+  forcing is uniform or per column chosen per variable, and the uniform case
+  costs one number. `MeteorologyField::at(column)` materialises a `Meteorology`,
+  so `surfaceHeatFlux` stays the pure function every F3.5 gate tests and an
+  `operator=` from `Meteorology` keeps those gates textually unchanged.
+- **Wind stress is derived in the engine** from speed and direction rather than
+  supplied beside them, and reaches both modes. The DeGray driver had been
+  setting `windSpeed` for the heat budget while `windStressX/Y` stayed at zero:
+  wind evaporated water and moved none, and because `Ri = N²/max(shear, 1e-12)`
+  has no shear without it, the whole mixing scheme sat at its 1e-7 background
+  for a simulated year. Two consumers of one variable, one wired and one not.
+- Wind direction convention taken from the reference rather than guessed. W2
+  projects stress as `cos(PHI − PHI0)` (`w2_4_win.f90:543`) and `W2Bathymetry`
+  lays the chain out along `(sin PHI0, cos PHI0)`, so a compass angle maps to
+  `π/2 − angle` and FVQual's own projection reproduces W2's expression without
+  this code deciding whether PHI is a from- or a towards-bearing.
+- `Hydro::TurbulenceClosure`: k-epsilon with Galperin stability functions,
+  behind `useTurbulenceClosure`, off by default. Ten gates against theory.
+- `Testing::basinGrid` — an nx-by-ny basin. Every prior gate used a one-cell-wide
+  channel strip, which is right for the 1-D benchmarks and wrong for anything
+  that circulates.
+
+### Fixed — the DeGray wind failure, and three defects found looking for it
+
+- **The vertical Courant limit read a scaled velocity.** `m_verticalFlux` stores
+  `volumeFlux/planArea`, a true velocity only where interface area equals plan
+  area; under hypsography DeGray's near-bed interfaces are 0.8% of it, so the
+  limit under-restricted by up to 125×, never bound, and near-bed momentum
+  diverged to 1e70 m/s in six steps. This was the failure. Fixed at the point of
+  use so the mass-consistency identity stayed out of the change.
+- **A data race in the closure's tridiagonal workspace** — the second time this
+  exact bug has been written here. F7.1b found it in the momentum and scalar
+  solves; it survives unit testing both times because the gates are
+  single-threaded.
+- **Wind stress on the body-force path.** `τ/(ρH)` multiplied back by a depth
+  that evolves through the subcycle became `τh/(ρH₀)`: a column gaining depth
+  gained stress. Now on the depth-independent surface-stress path.
+- **The barotropic Courant limit used the plan area at full pool** rather than
+  the storage area at the current stage.
+
+### Changed — what the measurements now say
+
+- Wind stress fixes the epilimnion: the 5–10 m band goes from −3.91 to −1.11 °C,
+  and without it the modelled April surface layer is 3 m against a measured 14 m.
+- The residual interior warm bias is **advective, not mixing**: removing mixing
+  entirely makes it worse (5.87 °C against 3.42). A one-segment-wide basin
+  forces every wind-driven return path through the vertical, and the same basin
+  eight cells wide transports 39% less heat below 20 m.
+- k-epsilon is a modest improvement on Richardson damping, 3.42 against 3.59 °C.
+  **An earlier entry claimed the opposite** — 8.95 against 8.35 — from runs that
+  predated the Courant fix and were pinned at the time-step floor. A comparison
+  between two schemes is only worth its numbers if the model underneath steps
+  correctly.
+
 ### Added — Phase 0 (scaffolding)
 
 - CMake 3.21+ build with vcpkg manifest, presets for Linux/macOS/Windows, and a

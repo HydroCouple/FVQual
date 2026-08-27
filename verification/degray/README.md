@@ -84,6 +84,36 @@ through November, and that part is real: during turnover the profile has two
 competing maxima — a sharp shallow one near 2 m and the eroding metalimnion base
 near 20–40 m — and they trade places from day to day.
 
+## Wind stress, and what measuring against the casts showed
+
+Matched runs, 30 layers, against the measured casts in `prf_dam.npt`:
+
+| | overall RMSE | 5–10 m | 20–30 m | 30–60 m |
+|---|---|---|---|---|
+| no wind stress | **2.29 °C** | −3.91 | −0.83 | −0.55 |
+| Richardson + wind | 3.59 °C | −1.11 | +3.22 | +3.65 |
+| k-epsilon + wind | **3.42 °C** | −1.23 | +2.95 | +3.39 |
+| no mixing at all + wind | 5.87 °C | +0.84 | +5.78 | +6.21 |
+
+**Wind stress fixes the epilimnion.** Without it the modelled April surface layer
+is 3 m against a measured 14 m, and the 5–10 m band sits at −3.91 °C.
+
+**The interior bias it costs is advective, not mixing.** Removing mixing entirely
+makes the interior *worse*, so heat is being carried down by the wind-driven
+overturning cell rather than mixed down; mixing partly counteracts it by holding
+heat near the surface where the budget can shed it.
+
+**And the cell is inflated by the schematisation.** A laterally-averaged grid is
+one segment wide, so every return path is forced through the vertical. The same
+synthetic basin under the same wind transports 39% less heat below 20 m when it
+is eight cells wide instead of one. Whether that accounts for *all* of the
++3 to +4 °C cannot be decided on this dataset, which is one segment wide by
+construction — the caveat at the top of this file, arriving as a number.
+
+Note that no-wind still scores best overall. It gets there with an epilimnion a
+fifth of the measured thickness, which is worth stating plainly: a better summary
+statistic from a model that cannot stir its surface layer is not the better model.
+
 ## What this run found
 
 Two defects that 247 passing unit tests did not, both in the heat budget:
