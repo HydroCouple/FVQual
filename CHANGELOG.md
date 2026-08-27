@@ -71,6 +71,15 @@ to five in the afternoon — both two sides disagreeing about what a number mean
   FVQual is a 3-D mesh model and has no use for a cross-section class of its own.
 - Flow area and storage area are separate and provably not collapsible: on the
   test section 48 of 80 m² conveys, 60%.
+- `SDK::Spatial::LayeredMeshComponentDataItem<T>` (F8.2b) — the concrete item
+  over the SDK's typed hyperslab plane, entity at dimension 0 and layer at
+  dimension 1, so it stays readable through the polyhedral-surface base by a
+  partner that knows nothing about layers. It borrows the vertical coordinate
+  and hands it out live rather than snapshotting at construction: an item
+  holding a copy of the elevations would answer confidently and wrongly for the
+  rest of a run, and nothing about the values would look wrong. Five gates,
+  three ablations. FVQual's `SigmaVerticalCoordinate` drops into it directly —
+  verified by compiling the two together.
 - **The specification had a hole, and implementing it twice found it.** At
   exactly the invert both implementations returned the bottom width for
   `topWidth` and `wettedPerimeter` while the closed form said zero. The limit
