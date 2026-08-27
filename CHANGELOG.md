@@ -20,8 +20,29 @@ using it under-estimates friction, and worst where the hypsography is steepest.
   models without a curve are bit-for-bit unchanged. The three depths order as
   `V/A < h_c < h_max`, and the correction moves momentum from the top of that
   range to the middle. For DeGray's shape `h_c ≈ 0.39 H`, so the drag coefficient
-  rises about fourfold. **This is not a small change**, and any hypsographic
-  result predating it will move.
+  rises about fourfold.
+
+**On DeGray that fourfold change moves nothing, and that was worth measuring.**
+The commit that introduced it warned that "any hypsographic result predating this
+will move." Re-run to day 150 against the 24 measured casts, with the friction
+wiring the only difference between the two runs:
+
+| | RMSE | 5–10 m | 20–30 m | 30–60 m |
+|---|---|---|---|---|
+| friction on `h_max` (before) | 3.59 °C | −1.11 | +3.22 | +3.65 |
+| friction on `h_c` (after) | 3.59 °C | −1.11 | +3.22 | +3.65 |
+
+Every band identical to two decimals over 333 measurements. Whole-run maxima:
+surface temperature **0.035 °C** (0.26%), bottom temperature 0.039 °C, volume
+0.001%, heat content 0.018%. The daily forcing columns differ too, which is the
+tell: the two runs diverge only by step-sequence jitter, not by physics.
+
+The reason is that DeGray is an impoundment, not a river. Its barotropic
+velocities are millimetres per second and Manning drag goes as `u²`, so the term
+is negligible whatever depth it is given. The correction is real, and it will
+matter in a riverine or shallow domain where friction actually controls the flow.
+It does not matter here. The baseline run reproducing the historical 3.59 °C
+table exactly is what makes that a comparison rather than a coincidence.
 - Wired into the Manning term only. Continuity, the pressure gradient and the
   wave speeds still see `m_h`, because those depend on how much water is present
   and where its surface is, not on how well the section carries it.
