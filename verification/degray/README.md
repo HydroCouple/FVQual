@@ -143,3 +143,46 @@ run either way — but the reported peak surface temperature fell from 31.4 °C 
 had nothing to do with the reservoir. Caught by asserting that a caption reading
 "near solar noon" was true of the timestamps, which is not where one expects to
 find a timing bug.
+
+## How small a difference is worth believing
+
+DeGray amplifies round-off to a saturated few hundredths of a degree within a
+single simulated day. Any single-run difference below about **0.1 °C** is not
+interpretable, and several of the questions worth asking about this model produce
+differences smaller than that.
+
+The measurement. The mesh can be built by two routes — `toMeshDefinition` and
+`toPlannedMeshDefinition` at one lane — that produce *geometrically identical*
+meshes: node coordinates equal to the last bit, face areas agreeing to 5e-14
+relative, the same 30 faces and 91 edges. They differ only in the order faces
+list their nodes, which changes the order edges are numbered and therefore the
+order fluxes are summed. Running both:
+
+| | surface temperature difference |
+|---|---|
+| after one simulated day | 0.0039 °C |
+| mean over 15 days | 0.021 °C |
+| maximum over 15 days | 0.069 °C |
+
+**This is not a defect and cannot be tuned away.** The model is deterministic —
+two runs of the same binary on the same mesh are bit-identical. What differs is a
+perturbation at the 1e-16 level, and the barotropic mode amplifies it to a few
+hundredths of a degree within a day, after which it saturates rather than
+continuing to grow. Compensated summation or a canonical edge order would change
+the seed, not the amplification; the floor would come back.
+
+Three things this qualifies, all measured this session:
+
+| | difference | against the floor |
+|---|---|---|
+| Manning friction on the conveyance depth (F1.5b) | 0.035 °C | at the floor — no interpretable effect |
+| adaptive lateral refinement, 67 columns | 0.029 °C | below the floor — no interpretable effect |
+| uniform two lanes | 0.25 °C | 3–12x the floor — a real difference |
+
+So the conclusions stand, and the first two stand for a sharper reason than "the
+numbers looked close": the effect is smaller than the model's own reproducibility.
+
+What to do instead of chasing it: compare quantities that average the noise out —
+volume-weighted means over a season rather than a point at an instant, or an
+ensemble of runs seeded by trivial perturbations, reporting the spread alongside
+the difference. A single pair of runs cannot resolve a tenth of a degree here.
