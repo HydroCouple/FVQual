@@ -515,6 +515,38 @@ int main(int argc, char **argv)
     // the figure a limnologist would ask for first. Depth is written per row
     // rather than implied by the layer index, because the sigma grid moves with
     // the surface and a layer is not at a fixed depth.
+    // The mesh itself, written once: enough for a viewer to draw the actual
+    // cells rather than a schematic. Polygon nodes, because a planned mesh has
+    // faces with more than four of them wherever the lane count changes.
+    {
+        std::ofstream geometry(outputs + "/degray_mesh.csv");
+
+        geometry << "column,node_index,x,y\n";
+
+        const std::vector<int64_t> &offsets = horizontal.faceNodeOffsets();
+        const std::vector<int64_t> &nodes   = horizontal.faceNodes();
+
+        for (int64_t c = 0; c < horizontal.faceCount(); ++c)
+        {
+            for (int64_t i = offsets[static_cast<size_t>(c)];
+                 i < offsets[static_cast<size_t>(c) + 1]; ++i)
+            {
+                const size_t n = static_cast<size_t>(nodes[static_cast<size_t>(i)]);
+
+                geometry << c << ',' << (i - offsets[static_cast<size_t>(c)]) << ','
+                         << horizontal.nodeX()[n] << ',' << horizontal.nodeY()[n]
+                         << '\n';
+            }
+        }
+    }
+
+    // The whole three-dimensional field, one row per cell per report. This is
+    // what a slice-and-animate view needs and what the single-column profile
+    // cannot provide: the dam profile is depth against time, not a field.
+    std::ofstream field(outputs + "/degray_field.csv");
+
+    field << "jday,column,layer,top_m,bottom_m,temperature_C\n";
+
     std::ofstream profiles(outputs + "/degray_profiles.csv");
 
     profiles << "jday,layer,depth_m,elevation_m,temperature_C\n";
@@ -750,6 +782,17 @@ int main(int argc, char **argv)
         for (int k = 0; k < kLayers; ++k)
         {
             const double centre = 0.5 * (layered.z(deep, k) + layered.z(deep, k + 1));
+
+            // Every column, not just the dam, so the field can be sliced.
+            if (k == 0)
+            {
+                for (int64_t c = 0; c < layered.columnCount(); ++c)
+                    for (int kk = 0; kk < kLayers; ++kk)
+                        field << day << ',' << c << ',' << kk << ','
+                              << layered.z(c, kk) << ',' << layered.z(c, kk + 1) << ','
+                              << state.speciesAt(temperature, layered.cell(c, kk))
+                              << '\n';
+            }
 
             profiles << day << ',' << k << ',' << layered.z(deep, 0) - centre << ','
                      << centre << ','
