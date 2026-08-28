@@ -68,6 +68,36 @@ constexpr int kDefaultLayers = 30;
  * information — which is the only way to ask whether DeGray's interior warm
  * bias is the one-segment grid rather than the physics.
  */
+/*!
+ * \brief The deepest lane of the dam segment.
+ *
+ * A cast at the dam is taken where the water is, which in a section laid out
+ * across the channel is the middle. Reporting the last column instead would pick
+ * the outermost lane — shallower by construction — so widening the mesh would
+ * appear to change the profile when it had only changed where the profile was
+ * measured.
+ */
+int64_t deepestDamColumn(const FVQual::Mesh::LayeredMesh &layered, int lanes)
+{
+    const int64_t first = layered.columnCount() - lanes;
+
+    int64_t best      = first;
+    double  deepestSoFar = layered.columnDepth()[static_cast<size_t>(first)];
+
+    for (int64_t c = first + 1; c < layered.columnCount(); ++c)
+    {
+        const double depth = layered.columnDepth()[static_cast<size_t>(c)];
+
+        if (depth > deepestSoFar)
+        {
+            deepestSoFar = depth;
+            best         = c;
+        }
+    }
+
+    return best;
+}
+
 int lateralCells()
 {
     if (const char *value = std::getenv("FVQUAL_LANES"))
@@ -646,7 +676,12 @@ int main(int argc, char **argv)
 
         // Report from the deepest column, at the dam, where a profile would be
         // taken.
-        const int64_t deep = layered.columnCount() - 1;
+        // The deepest lane of the dam segment. At one lane this is the dam
+        // column and nothing changes; at more, reporting the LAST column would
+        // pick an outer lane, which sits on a higher bed and holds a different
+        // water mass — so a one-lane and a four-lane run would be compared at
+        // different places in the section and the difference read as physics.
+        const int64_t deep = deepestDamColumn(layered, lanes);
 
         const double surfaceT = state.speciesAt(temperature, layered.cell(deep, 0));
         const double bottomT =
@@ -713,7 +748,7 @@ int main(int argc, char **argv)
     final << "depth_m,elevation_m,temperature_C\n";
     final.precision(6);
 
-    const int64_t deep = layered.columnCount() - 1;
+    const int64_t deep = deepestDamColumn(layered, lanes);
 
     for (int k = 0; k < kLayers; ++k)
     {

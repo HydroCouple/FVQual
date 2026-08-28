@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Measured — widening DeGray does not reduce its interior heat transport
+
+The residual +3 to +4 °C interior warm bias has been attributed to the
+laterally-averaged schematisation: one segment wide, so every return path is
+forced through the vertical. A synthetic basin supported that — 39% less heat
+below 20 m at eight cells wide. `toLateralMeshDefinition()` makes the same test
+possible on DeGray's own bathymetry, inventing no survey data.
+
+**It does not reproduce.** One lane against two, identical forcing, profiles taken
+at the deepest lane of the dam segment so both sample the same 54.5 m column:
+
+| | warming below 20 m, days 64.5–79.5 |
+|---|---|
+| one lane (laterally averaged) | +1.751 °C |
+| two lanes | +1.972 °C |
+
+Two lanes carries **12.7% more** heat below 20 m, not less. Day-to-day scatter in
+the difference is roughly half the signal, so the sign is more trustworthy than
+the magnitude — but it is the opposite sign from the hypothesis.
+
+**What this does not settle.** Two lanes over fifteen days of early spring is a
+weak test of a claim about eight cells over a season, and the bias it is meant to
+explain develops over months. The honest statement is that the schematisation
+hypothesis is unsupported so far, not refuted.
+
+**Why the stronger test was not run.** DeGray's narrowest active segment is 79 m
+wide, so four lanes makes 19.8 m cells against kilometre-long segments and the
+barotropic Courant limit collapses; two lanes already needs 3.1× the internal
+steps for the same period. Uniform lateral refinement refines the narrow upstream
+segments hardest, which is exactly where it is least wanted — the overturning
+cell in question lives in the wide water near the dam. Testing this properly
+needs *non-uniform* lateral refinement, and that is the next piece of work rather
+than more of this one.
+
 ### Added — F1.5 conveyance: momentum reconciled with the hypsographic depth
 
 Hypsography corrected *storage* in F1.5; momentum was left behind. Manning's drag
