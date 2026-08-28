@@ -6,6 +6,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — non-uniform lateral refinement, and a better-controlled answer
+
+Uniform refinement refines the wrong place. `planLateralCells(maxLanes,
+minCellWidth)` chooses lanes per segment so no cell falls below a stated width:
+DeGray's 79 m tributary arms keep one lane while the 5530 m water near the dam —
+where the overturning cell under investigation lives — gets up to eight. The mesh
+is non-uniform but still **conforming**: where the lane count changes, the shared
+boundary carries the union of both sides' lane positions and the coarser cell is
+a polygon walking all of them, so every edge has exactly two faces and no node
+hangs. Up to 7 nodes per face on DeGray, 41 such faces at a 250 m minimum.
+
+**The cost this buys.** At a 700 m minimum DeGray becomes 67 columns and needs
+**7218** internal steps against **6770** at one lane — 6.6% more. Uniform two
+lanes needs 3.1×, for half the columns.
+
+**And it changes the answer.** Volume-weighted warming below 20 m at the dam,
+days 64.5–79.5, every run through the same mesh path so the jitter cancels:
+
+| | warming below 20 m | vs control |
+|---|---|---|
+| one lane (laterally averaged) | +1.724 °C | — |
+| adaptive, 67 columns, ≤7 lanes in the wide water | +1.695 °C | **−1.7%** |
+| uniform two lanes | +1.972 °C | +14.4% |
+
+The mesh-path jitter — the same model through two builders that differ only in
+face-node ordering — is about **0.08 °C**. The adaptive difference is 0.029 °C,
+*below* that floor: refining the wide water where the overturning cell lives
+produces **no detectable change** in how much heat reaches the hypolimnion. The
+uniform result, 0.25 °C, is about three times the floor and is now the suspect
+number: uniform two lanes cuts the narrow arms to 39 m cells, and that is where
+its extra transport is likely to come from rather than from anything about
+lateral averaging near the dam.
+
+So the schematisation hypothesis remains unsupported, and on a better-controlled
+test than the previous one. Still fifteen days of early spring against a bias
+that develops over months.
+
 ### Measured — widening DeGray does not reduce its interior heat transport
 
 The residual +3 to +4 °C interior warm bias has been attributed to the

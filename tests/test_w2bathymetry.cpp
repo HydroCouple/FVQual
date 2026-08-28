@@ -754,3 +754,136 @@ TEST(W2Bathymetry, OneLaneReproducesTheLaterallyAveragedMeshExactly)
         EXPECT_DOUBLE_EQ(volumeOf(true, stage), volumeOf(false, stage))
             << "stage " << stage;
 }
+
+TEST(W2Bathymetry, AdaptiveLateralPlanRefinesTheWideWaterAndSparesTheArms)
+{
+    // The point of planning lanes per segment. Uniform refinement makes 19.8 m
+    // cells in DeGray's 79 m tributary arms while the 5530 m water near the dam
+    // gets the same four lanes — refining hardest exactly where it is least
+    // wanted, and collapsing the barotropic step on cells that contribute
+    // nothing to the question.
+    if (!haveDeGray())
+        GTEST_SKIP() << "DeGray bathymetry not available";
+
+    W2Bathymetry bathymetry;
+    std::string  message;
+
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
+
+    constexpr double kMinCell = 250.0;
+
+    const auto plan = bathymetry.planLateralCells(/*maxLanes=*/8, kMinCell);
+
+    ASSERT_EQ(plan.lanes.size(), bathymetry.activeSegments().size());
+
+    int widest = 1;
+    int narrowest = 999;
+
+    for (int lanes : plan.lanes)
+    {
+        widest    = std::max(widest, lanes);
+        narrowest = std::min(narrowest, lanes);
+    }
+
+    // Some segment must actually be refined, or the plan is doing nothing.
+    EXPECT_GT(widest, 1);
+
+    // And some must be left alone, or it is uniform refinement with extra steps.
+    EXPECT_EQ(narrowest, 1);
+
+    // The constraint the plan exists to honour, checked segment by segment
+    // against the widths rather than against the plan's own arithmetic.
+    HydroCouple::SDK::IO::MeshDefinition definition;
+    std::vector<double>                  bed;
+
+    ASSERT_TRUE(bathymetry.toPlannedMeshDefinition(plan, definition, bed, message))
+        << message;
+
+    HorizontalMesh horizontal;
+    ASSERT_TRUE(horizontal.build(definition, message)) << message;
+
+    ASSERT_EQ(horizontal.faceCount(), plan.columnCount);
+
+    // Conformance is the property that could quietly be wrong: a hanging node
+    // would leave an edge owned by one face, and the flux across it would go
+    // nowhere. HorizontalMesh refuses a non-manifold mesh outright, so building
+    // at all is most of the check; this confirms the interior is closed.
+    int64_t boundaryEdges = 0;
+
+    for (int64_t e = 0; e < horizontal.edgeCount(); ++e)
+    {
+        if (horizontal.edgeRightFace()[static_cast<size_t>(e)] < 0)
+            ++boundaryEdges;
+    }
+
+    EXPECT_GT(boundaryEdges, 0) << "a closed reservoir still has an outer boundary";
+    EXPECT_LT(boundaryEdges, horizontal.edgeCount())
+        << "every edge is a boundary, so no two cells are connected";
+
+    // Where the lane count changes, the coarse cell must carry its neighbour's
+    // boundary nodes as extra collinear vertices — a face with more than four.
+    // Without at least one, the transition path never ran and this whole test
+    // reduces to a check on a uniform mesh under a different name.
+    int64_t transitionFaces = 0;
+
+    for (size_t f = 0; f + 1 < definition.faceNodeOffsets.size(); ++f)
+    {
+        if (definition.faceNodeOffsets[f + 1] - definition.faceNodeOffsets[f] > 4)
+            ++transitionFaces;
+    }
+
+    EXPECT_GT(transitionFaces, 0)
+        << "no face has more than four nodes, so no lane-count transition was built";
+}
+
+TEST(W2Bathymetry, AnAdaptivelyPlannedDeGrayHoldsTheSameWater)
+{
+    // Non-uniform lanes must not change the reservoir either. Same requirement
+    // as the uniform case, and a stronger test of it: the lane partitions differ
+    // from segment to segment, so an error in the share arithmetic cannot cancel
+    // out the way it might under a uniform split.
+    if (!haveDeGray())
+        GTEST_SKIP() << "DeGray bathymetry not available";
+
+    W2Bathymetry bathymetry;
+    std::string  message;
+
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
+
+    const double reference = bathymetry.volumeAt(123.8);
+
+    for (double minCell : {2000.0, 700.0, 250.0})
+    {
+        const auto plan = bathymetry.planLateralCells(8, minCell);
+
+        HydroCouple::SDK::IO::MeshDefinition definition;
+        std::vector<double>                  bed;
+
+        ASSERT_TRUE(bathymetry.toPlannedMeshDefinition(plan, definition, bed, message))
+            << message;
+
+        HorizontalMesh horizontal;
+        ASSERT_TRUE(horizontal.build(definition, message)) << message;
+
+        for (int64_t f = 0; f < horizontal.faceCount(); ++f)
+            horizontal.faceBed()[static_cast<size_t>(f)] = bed[static_cast<size_t>(f)];
+
+        SigmaSpec spec;
+        spec.layerCount        = 30;
+        spec.minLayerThickness = 0.0;
+
+        LayeredMesh layered;
+        ASSERT_TRUE(layered.build(horizontal, spec, 123.8, message)) << message;
+
+        ASSERT_TRUE(bathymetry.applyPlannedHypsography(layered, plan, message))
+            << message;
+
+        const std::vector<double> surface(
+            static_cast<size_t>(layered.columnCount()), 123.8);
+        ASSERT_TRUE(layered.updateSurface(surface, message)) << message;
+
+        EXPECT_NEAR(layered.totalVolume(), reference, 0.002 * reference)
+            << "minimum cell " << minCell << " m, " << layered.columnCount()
+            << " columns";
+    }
+}

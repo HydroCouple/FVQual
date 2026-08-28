@@ -776,4 +776,297 @@ bool W2Bathymetry::applyLateralHypsography(Mesh::LayeredMesh &mesh, int lateralC
     return true;
 }
 
+
+W2Bathymetry::LateralPlan W2Bathymetry::planLateralCells(int maxLanes,
+                                                         double minCellWidth) const
+{
+    LateralPlan plan;
+
+    plan.lanes.reserve(m_active.size());
+    plan.offset.reserve(m_active.size());
+
+    const int ceiling = std::max(1, maxLanes);
+
+    for (size_t j = 0; j < m_active.size(); ++j)
+    {
+        int lanes = ceiling;
+
+        if (minCellWidth > 0.0)
+        {
+            const double w = surfaceWidth(m_active[j]);
+            const int    fits =
+                static_cast<int>(std::floor(w / minCellWidth));
+
+            lanes = std::clamp(fits, 1, ceiling);
+        }
+
+        plan.offset.push_back(plan.columnCount);
+        plan.lanes.push_back(lanes);
+        plan.columnCount += lanes;
+    }
+
+    return plan;
+}
+
+namespace {
+
+/*!
+ * \brief Sorted union of two even partitions of [0, 1], deduplicated.
+ *
+ * These are the lane boundaries a shared segment boundary must carry so that a
+ * coarse cell and its finer neighbour still meet edge to edge.
+ */
+std::vector<double> partitionUnion(int left, int right)
+{
+    std::vector<double> f;
+
+    for (int i = 0; i <= left; ++i)
+        f.push_back(static_cast<double>(i) / static_cast<double>(left));
+
+    for (int i = 0; i <= right; ++i)
+        f.push_back(static_cast<double>(i) / static_cast<double>(right));
+
+    std::sort(f.begin(), f.end());
+
+    f.erase(std::unique(f.begin(), f.end(),
+                        [](double a, double b) { return std::abs(a - b) < 1.0e-12; }),
+            f.end());
+
+    return f;
+}
+
+} // namespace
+
+bool W2Bathymetry::toPlannedMeshDefinition(const LateralPlan &plan,
+                                           HydroCouple::SDK::IO::MeshDefinition &definition,
+                                           std::vector<double> &bed,
+                                           std::string &message) const
+{
+    if (m_active.empty())
+    {
+        message = "no active segments to build a mesh from";
+        return false;
+    }
+
+    if (plan.lanes.size() != m_active.size())
+    {
+        message = "the lateral plan covers " + std::to_string(plan.lanes.size()) +
+                  " segments but the bathymetry has " + std::to_string(m_active.size());
+        return false;
+    }
+
+    definition          = HydroCouple::SDK::IO::MeshDefinition{};
+    definition.meshName = "mesh2d";
+
+    bed.clear();
+
+    const size_t count = m_active.size();
+
+    std::vector<double> centreX(count + 1, 0.0);
+    std::vector<double> centreY(count + 1, 0.0);
+    std::vector<double> normalX(count + 1, 0.0);
+    std::vector<double> normalY(count + 1, 0.0);
+
+    double x = 0.0;
+    double y = 0.0;
+
+    for (size_t j = 0; j <= count; ++j)
+    {
+        const size_t segment = std::min(j, count - 1);
+        const double phi     = m_orientation[static_cast<size_t>(m_active[segment])];
+
+        const double dx = std::sin(phi);
+        const double dy = std::cos(phi);
+
+        centreX[j] = x;
+        centreY[j] = y;
+        normalX[j] = -dy;
+        normalY[j] = dx;
+
+        if (j < count)
+        {
+            x += dx * m_length[static_cast<size_t>(m_active[segment])];
+            y += dy * m_length[static_cast<size_t>(m_active[segment])];
+        }
+    }
+
+    // Each boundary carries the union of the lane partitions on either side, so
+    // a four-lane segment meeting a one-lane one still shares whole edges.
+    std::vector<std::vector<double>> fractions(count + 1);
+    std::vector<int64_t>             firstNode(count + 1, 0);
+
+    for (size_t j = 0; j <= count; ++j)
+    {
+        const int left  = j == 0 ? plan.lanes.front() : plan.lanes[j - 1];
+        const int right = j == count ? plan.lanes.back() : plan.lanes[j];
+
+        fractions[j] = partitionUnion(left, right);
+
+        double half = 0.0;
+
+        if (j == 0)
+            half = 0.5 * surfaceWidth(m_active[0]);
+        else if (j == count)
+            half = 0.5 * surfaceWidth(m_active[count - 1]);
+        else
+            half = 0.25 * (surfaceWidth(m_active[j - 1]) + surfaceWidth(m_active[j]));
+
+        if (!(half > 0.0))
+        {
+            message = "segment " + std::to_string(m_active[std::min(j, count - 1)]) +
+                      " has no width at the initial water surface";
+            return false;
+        }
+
+        firstNode[j] = static_cast<int64_t>(definition.nodeX.size());
+
+        for (double f : fractions[j])
+        {
+            const double offset = -half + 2.0 * half * f;
+
+            definition.nodeX.push_back(centreX[j] + offset * normalX[j]);
+            definition.nodeY.push_back(centreY[j] + offset * normalY[j]);
+        }
+    }
+
+    definition.faceNodeOffsets.push_back(0);
+
+    // Indices in `fractions[j]` lying within [lo, hi], inclusive of both ends.
+    const auto span = [&](size_t boundary, double lo, double hi) {
+        std::vector<int64_t> nodes;
+
+        for (size_t i = 0; i < fractions[boundary].size(); ++i)
+        {
+            const double f = fractions[boundary][i];
+
+            if (f >= lo - 1.0e-12 && f <= hi + 1.0e-12)
+                nodes.push_back(firstNode[boundary] + static_cast<int64_t>(i));
+        }
+
+        return nodes;
+    };
+
+    for (size_t j = 0; j < count; ++j)
+    {
+        const int    segment = m_active[j];
+        const int    lanes   = plan.lanes[j];
+        const double halfTop = 0.5 * surfaceWidth(segment);
+
+        for (int l = 0; l < lanes; ++l)
+        {
+            const double lo = static_cast<double>(l) / static_cast<double>(lanes);
+            const double hi = static_cast<double>(l + 1) / static_cast<double>(lanes);
+
+            const std::vector<int64_t> upstream   = span(j, lo, hi);
+            const std::vector<int64_t> downstream = span(j + 1, lo, hi);
+
+            if (upstream.size() < 2 || downstream.size() < 2)
+            {
+                message = "segment " + std::to_string(segment) + " lane " +
+                          std::to_string(l) + " has no well-defined boundary span";
+                return false;
+            }
+
+            // Walk the upstream side outward, then the downstream side back:
+            // a simple polygon, with extra collinear vertices wherever the
+            // neighbour is finer.
+            for (int64_t n : upstream)
+                definition.faceNodes.push_back(n);
+
+            for (auto it = downstream.rbegin(); it != downstream.rend(); ++it)
+                definition.faceNodes.push_back(*it);
+
+            definition.faceNodeOffsets.push_back(
+                static_cast<int64_t>(definition.faceNodes.size()));
+
+            const double a = -halfTop + 2.0 * halfTop * lo;
+            const double b = -halfTop + 2.0 * halfTop * hi;
+
+            double lowest = m_initialSurface[static_cast<size_t>(segment)];
+
+            for (int k = 0; k < layerCount(); ++k)
+            {
+                if (lateralOverlap(a, b, 0.5 * width(k, segment), l == 0,
+                                   l + 1 == lanes) > 0.0)
+                    lowest = std::min(lowest, layerBottom(k));
+            }
+
+            bed.push_back(lowest);
+        }
+    }
+
+    message.clear();
+    return true;
+}
+
+bool W2Bathymetry::applyPlannedHypsography(Mesh::LayeredMesh &mesh,
+                                           const LateralPlan &plan,
+                                           std::string &message) const
+{
+    if (mesh.columnCount() != plan.columnCount)
+    {
+        message = "the mesh has " + std::to_string(mesh.columnCount()) +
+                  " columns but the lateral plan describes " +
+                  std::to_string(plan.columnCount);
+        return false;
+    }
+
+    for (size_t j = 0; j < m_active.size(); ++j)
+    {
+        const int    segment = m_active[j];
+        const int    lanes   = plan.lanes[j];
+        const double halfTop = 0.5 * surfaceWidth(segment);
+        const double length  = m_length[static_cast<size_t>(segment)];
+
+        for (int l = 0; l < lanes; ++l)
+        {
+            const double a =
+                -halfTop + 2.0 * halfTop * static_cast<double>(l) / lanes;
+            const double b =
+                -halfTop + 2.0 * halfTop * static_cast<double>(l + 1) / lanes;
+
+            std::vector<double> elevation;
+            std::vector<double> area;
+
+            for (int k = layerCount() - 1; k >= 0; --k)
+            {
+                const double overlap = lateralOverlap(a, b, 0.5 * width(k, segment),
+                                                      l == 0, l + 1 == lanes);
+
+                if (overlap <= 0.0)
+                    continue;
+
+                const double bottom = layerBottom(k);
+                const double middle =
+                    bottom + 0.5 * m_layerHeight[static_cast<size_t>(k)];
+
+                const double planArea = overlap * length;
+
+                if (!elevation.empty() && planArea < area.back())
+                {
+                    elevation.push_back(middle);
+                    area.push_back(area.back());
+                    continue;
+                }
+
+                elevation.push_back(middle);
+                area.push_back(planArea);
+            }
+
+            if (elevation.size() < 2)
+            {
+                message = "segment " + std::to_string(segment) + " lane " +
+                          std::to_string(l) + " has no storage curve";
+                return false;
+            }
+
+            if (!mesh.setHypsography(plan.offset[j] + l, elevation, area, message))
+                return false;
+        }
+    }
+
+    message.clear();
+    return true;
+}
+
 } // namespace FVQual::IO

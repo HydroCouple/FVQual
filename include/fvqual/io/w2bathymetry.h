@@ -234,6 +234,62 @@ public:
                                                int lateralCells,
                                                std::string &message) const;
 
+    /*!
+     * \brief How many lanes each segment gets, and where its columns start.
+     *
+     * **Why a plan object rather than two parameters.** The mesh builder and the
+     * hypsography have to agree exactly about lane counts and column ordering.
+     * Passing the same two numbers to both invites them to disagree — and this
+     * work has already produced one bug of precisely that shape. A plan computed
+     * once and handed to both cannot.
+     */
+    struct LateralPlan
+    {
+        std::vector<int>     lanes;  //!< Lanes per active segment.
+        std::vector<int64_t> offset; //!< First column of each segment.
+        int64_t              columnCount = 0;
+
+        [[nodiscard]] int laneCount(size_t segment) const
+        {
+            return lanes[segment];
+        }
+    };
+
+    /*!
+     * \brief Chooses lanes per segment so no cell is narrower than \p minCellWidth.
+     *
+     * **The problem this solves.** Refining every segment equally refines the
+     * wrong place. DeGray's narrowest active segment is 79 m across while its
+     * widest is 5530 m, so four lanes everywhere makes 19.8 m cells in the
+     * tributary arms — against kilometre-long segments — and the barotropic
+     * Courant limit collapses on cells that contribute nothing to the question
+     * being asked. The overturning cell under investigation lives in the wide
+     * water near the dam.
+     *
+     * A minimum cell width states the constraint directly: refine a segment only
+     * as far as it can afford. Narrow arms keep one lane; the wide lower
+     * reservoir gets the resolution.
+     *
+     * The resulting mesh is non-uniform but still **conforming**: where the lane
+     * count changes, the shared boundary carries the union of both sides' lane
+     * positions and the coarser cell is a polygon that walks all of them, so
+     * every edge is shared by exactly two faces and no node hangs.
+     *
+     * \param[in] maxLanes     Ceiling on lanes per segment (>= 1).
+     * \param[in] minCellWidth Narrowest lateral cell to allow (m).
+     */
+    [[nodiscard]] LateralPlan planLateralCells(int maxLanes, double minCellWidth) const;
+
+    //! Builds the mesh a \ref LateralPlan describes.
+    [[nodiscard]] bool toPlannedMeshDefinition(
+        const LateralPlan &plan, HydroCouple::SDK::IO::MeshDefinition &definition,
+        std::vector<double> &bed, std::string &message) const;
+
+    //! The storage curves for a mesh built by toPlannedMeshDefinition().
+    [[nodiscard]] bool applyPlannedHypsography(Mesh::LayeredMesh &mesh,
+                                               const LateralPlan &plan,
+                                               std::string &message) const;
+
 private:
     /*!
      * \brief Width of \p segment at its initial water surface (m).

@@ -250,9 +250,21 @@ int main(int argc, char **argv)
     HydroCouple::SDK::IO::MeshDefinition definition;
     std::vector<double>                  bed;
 
-    const int lanes = lateralCells();
+    // FVQUAL_LANES is a ceiling; FVQUAL_MIN_CELL, when set, keeps any lateral
+    // cell from falling below that width. Uniform refinement makes 19.8 m cells
+    // in DeGray's 79 m arms at four lanes and the barotropic step collapses on
+    // water that has nothing to do with the question; a minimum width refines
+    // the wide reservoir and leaves the arms alone.
+    double minCellWidth = 0.0;
 
-    if (!bathymetry.toLateralMeshDefinition(lanes, definition, bed, message))
+    if (const char *value = std::getenv("FVQUAL_MIN_CELL"))
+        minCellWidth = std::atof(value);
+
+    const auto plan  = bathymetry.planLateralCells(lateralCells(), minCellWidth);
+    const int  lanes     = plan.lanes.back();  //!< Lanes at the dam.
+    const int  headLanes = plan.lanes.front(); //!< Lanes at the head, which may differ.
+
+    if (!bathymetry.toPlannedMeshDefinition(plan, definition, bed, message))
     {
         std::cerr << "mesh: " << message << '\n';
         return 1;
@@ -302,7 +314,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!nohyps && !bathymetry.applyLateralHypsography(layered, lanes, message))
+    if (!nohyps && !bathymetry.applyPlannedHypsography(layered, plan, message))
     {
         std::cerr << "hypsography: " << message << '\n';
         return 1;
@@ -438,14 +450,17 @@ int main(int argc, char **argv)
         double headArea = 0.0;
         double damArea  = 0.0;
 
-        for (int l = 0; l < lanes; ++l)
-        {
+        for (int l = 0; l < headLanes; ++l)
             headArea += area[static_cast<size_t>(l)];
-            damArea +=
-                area[static_cast<size_t>(layered.columnCount() - lanes + l)];
-        }
 
         for (int l = 0; l < lanes; ++l)
+            damArea +=
+                area[static_cast<size_t>(layered.columnCount() - lanes + l)];
+
+        // Separate loops: with a planned mesh the head and the dam need not have
+        // the same number of lanes, and pairing them in one loop would silently
+        // attach the release to the wrong columns whenever they differ.
+        for (int l = 0; l < headLanes; ++l)
         {
             FVQual::Forcing::Source tributary;
             tributary.column    = l;
@@ -458,23 +473,27 @@ int main(int argc, char **argv)
 
             inflowIndices.push_back(index);
             inflowShare.push_back(area[static_cast<size_t>(l)] / headArea);
+        }
+
+        for (int l = 0; l < lanes; ++l)
+        {
+            const int64_t column = layered.columnCount() - lanes + l;
 
             FVQual::Forcing::Source release;
-            release.column    = layered.columnCount() - lanes + l;
+            release.column    = column;
             release.placement = FVQual::Forcing::Placement::Uniform;
 
-            const int outIndex = solver.sources().add(release, message);
+            const int index = solver.sources().add(release, message);
 
-            if (outIndex < 0)
+            if (index < 0)
                 break;
 
-            outflowIndices.push_back(outIndex);
-            outflowShare.push_back(
-                area[static_cast<size_t>(layered.columnCount() - lanes + l)] / damArea);
+            outflowIndices.push_back(index);
+            outflowShare.push_back(area[static_cast<size_t>(column)] / damArea);
         }
     }
 
-    if (static_cast<int>(inflowIndices.size()) != lanes ||
+    if (static_cast<int>(inflowIndices.size()) != headLanes ||
         static_cast<int>(outflowIndices.size()) != lanes)
     {
         std::cerr << "sources: " << message << '\n';
@@ -564,16 +583,15 @@ int main(int argc, char **argv)
 
         bool sourcesOk = true;
 
+        for (int l = 0; l < headLanes && sourcesOk; ++l)
+            sourcesOk = solver.sources().setDischarge(
+                inflowIndices[static_cast<size_t>(l)],
+                qin * inflowShare[static_cast<size_t>(l)], message);
+
         for (int l = 0; l < lanes && sourcesOk; ++l)
-        {
-            sourcesOk =
-                solver.sources().setDischarge(
-                    inflowIndices[static_cast<size_t>(l)],
-                    qin * inflowShare[static_cast<size_t>(l)], message) &&
-                solver.sources().setDischarge(
-                    outflowIndices[static_cast<size_t>(l)],
-                    -qout * outflowShare[static_cast<size_t>(l)], message);
-        }
+            sourcesOk = solver.sources().setDischarge(
+                outflowIndices[static_cast<size_t>(l)],
+                -qout * outflowShare[static_cast<size_t>(l)], message);
 
         if (!sourcesOk)
         {
@@ -586,7 +604,7 @@ int main(int argc, char **argv)
         // cooled the head of the reservoir in proportion to the lane count.
         const double inflowT = inflowTemperature.valueAt(day, 0);
 
-        for (int l = 0; l < lanes; ++l)
+        for (int l = 0; l < headLanes; ++l)
         {
             if (!solver.sources().setInflowValue(inflowIndices[static_cast<size_t>(l)],
                                                  temperature, temperature, inflowT,
