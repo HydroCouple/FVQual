@@ -65,6 +65,12 @@ const std::vector<double> kEmpty;
 
 bool W2TimeSeries::read(const std::string &path, std::string &message)
 {
+    return read(path, 0, message);
+}
+
+bool W2TimeSeries::read(const std::string &path, int valuesPerRecord,
+                        std::string &message)
+{
     std::ifstream input(path);
 
     if (!input)
@@ -73,11 +79,17 @@ bool W2TimeSeries::read(const std::string &path, std::string &message)
         return false;
     }
 
-    return parse(input, path, message);
+    return parse(input, path, valuesPerRecord, message);
 }
 
 bool W2TimeSeries::parse(std::istream &input, const std::string &origin,
                          std::string &message)
+{
+    return parse(input, origin, 0, message);
+}
+
+bool W2TimeSeries::parse(std::istream &input, const std::string &origin,
+                         int valuesPerRecord, std::string &message)
 {
     std::vector<std::string>         names;
     std::vector<double>              time;
@@ -117,8 +129,42 @@ bool W2TimeSeries::parse(std::istream &input, const std::string &origin,
             continue;
         }
 
-        if (fields.size() < 2)
+        if (fields.size() < 2 && valuesPerRecord <= 0)
             return fail("a data row needs a Julian day and at least one value");
+
+        // A wrapped record: the Julian day is on the first line only, and the
+        // rest of its values follow on lines that look like bare numbers.
+        std::vector<std::string> record = fields;
+
+        if (valuesPerRecord > 0)
+        {
+            while (static_cast<int>(record.size()) - 1 < valuesPerRecord)
+            {
+                std::string more;
+
+                if (!std::getline(input, more))
+                    return fail("file ended part way through a record: wanted " +
+                                std::to_string(valuesPerRecord) + " values, have " +
+                                std::to_string(record.size() - 1));
+
+                ++number;
+
+                const std::vector<std::string> extra = tokens(more);
+
+                if (extra.empty())
+                    continue;
+
+                if (!allNumeric(extra))
+                    return fail("expected the rest of a record, found text");
+
+                record.insert(record.end(), extra.begin(), extra.end());
+            }
+
+            if (static_cast<int>(record.size()) - 1 > valuesPerRecord)
+                return fail("record has " + std::to_string(record.size() - 1) +
+                            " values but " + std::to_string(valuesPerRecord) +
+                            " were expected");
+        }
 
         if (!seen)
         {
@@ -126,24 +172,24 @@ bool W2TimeSeries::parse(std::istream &input, const std::string &origin,
 
             // A file whose header did not survive gets positional names, so a
             // caller can still address the columns.
-            if (names.size() != fields.size() - 1)
+            if (names.size() != record.size() - 1)
             {
                 names.clear();
 
-                for (size_t i = 1; i < fields.size(); ++i)
+                for (size_t i = 1; i < record.size(); ++i)
                     names.push_back("COL" + std::to_string(i));
             }
 
             values.assign(names.size(), {});
         }
 
-        if (fields.size() - 1 != names.size())
+        if (record.size() - 1 != names.size())
         {
-            return fail("row has " + std::to_string(fields.size() - 1) +
+            return fail("row has " + std::to_string(record.size() - 1) +
                         " values but the header named " + std::to_string(names.size()));
         }
 
-        const double day = std::stod(fields.front());
+        const double day = std::stod(record.front());
 
         if (!time.empty() && day < time.back())
             return fail("Julian days must not go backwards");
@@ -151,7 +197,7 @@ bool W2TimeSeries::parse(std::istream &input, const std::string &origin,
         time.push_back(day);
 
         for (size_t i = 0; i < names.size(); ++i)
-            values[i].push_back(std::stod(fields[i + 1]));
+            values[i].push_back(std::stod(record[i + 1]));
     }
 
     if (time.empty())

@@ -264,6 +264,17 @@ int main(int argc, char **argv)
     const int  lanes     = plan.lanes.back();  //!< Lanes at the dam.
     const int  headLanes = plan.lanes.front(); //!< Lanes at the head, which may differ.
 
+    // Which W2 segment each column came from. Per-segment inputs — wind
+    // sheltering, and anything else the control file varies along the
+    // reservoir — have to be looked up through this rather than by assuming
+    // one column per segment, which stopped being true once lanes existed.
+    std::vector<int> segmentOfColumn(static_cast<size_t>(plan.columnCount), 0);
+
+    for (size_t j = 0; j < plan.lanes.size(); ++j)
+        for (int l = 0; l < plan.lanes[j]; ++l)
+            segmentOfColumn[static_cast<size_t>(plan.offset[j] + l)] =
+                static_cast<int>(j);
+
     if (!bathymetry.toPlannedMeshDefinition(plan, definition, bed, message))
     {
         std::cerr << "mesh: " << message << '\n';
@@ -377,6 +388,33 @@ int main(int argc, char **argv)
     // ── Forcing ───────────────────────────────────────────────────────────
 
     FVQual::IO::W2TimeSeries met, inflow, inflowTemperature, outflow;
+
+    // Wind sheltering, `wsc.npt`. W2 scales wind SPEED by this before both the
+    // surface heat budget and the momentum stress, so a sheltered reservoir
+    // neither evaporates nor overturns as though it sat in open water. DeGray's
+    // calibrated value is 0.90 everywhere; stress goes as the square of speed,
+    // so ignoring it overstates the wind stress by 23%.
+    //
+    // Optional, because a model without the file is a model with no sheltering.
+    FVQual::IO::W2TimeSeries sheltering;
+    bool                     hasSheltering = false;
+    {
+        std::string ignored;
+        // The record is as wide as the bathymetry has segments — the file's
+        // own header under-declares it, so the count has to come from here.
+        hasSheltering = sheltering.read(inputs + "/wsc.npt",
+                                        bathymetry.segmentCount(), ignored);
+    }
+
+    // Say so out loud. A calibrated input that is silently absent looks exactly
+    // like one that is present and equal to one, and the difference here is a
+    // 23% error in the wind stress.
+    if (hasSheltering)
+        std::printf("wind sheltering: wsc.npt, %d segments, %.2f at the dam\n",
+                    sheltering.columnCount(),
+                    sheltering.valueAt(kStartDay, sheltering.columnCount() - 1));
+    else
+        std::printf("wind sheltering: none (no wsc.npt) - full open-water stress\n");
 
     if (!met.read(inputs + "/met.npt", message) ||
         !inflow.read(inputs + "/qin_br1.npt", message) ||
@@ -586,7 +624,36 @@ int main(int argc, char **argv)
 
         weather.airTemperature.setUniform(met.valueAt(day, air));
         weather.dewPoint.setUniform(met.valueAt(day, dew));
-        weather.windSpeed.setUniform(met.valueAt(day, wind));
+        // Sheltering is per segment, so it varies across the reservoir; applying
+        // it to the speed rather than to the stress keeps the heat budget and
+        // the momentum seeing the same wind, which is the failure mode that
+        // once had wind evaporating water without moving it.
+        if (hasSheltering)
+        {
+            std::vector<double> sheltered(static_cast<size_t>(layered.columnCount()));
+
+            for (int64_t c = 0; c < layered.columnCount(); ++c)
+            {
+                const int segment =
+                    std::min(segmentOfColumn[static_cast<size_t>(c)],
+                             sheltering.columnCount() - 1);
+
+                sheltered[static_cast<size_t>(c)] =
+                    met.valueAt(day, wind) * sheltering.valueAt(day, segment);
+            }
+
+            std::string local;
+
+            if (!weather.windSpeed.setPerColumn(sheltered, layered.columnCount(), local))
+            {
+                std::cerr << "wind sheltering: " << local << '\n';
+                return 1;
+            }
+        }
+        else
+        {
+            weather.windSpeed.setUniform(met.valueAt(day, wind));
+        }
 
         // W2's PHI is a compass angle, clockwise from north, and W2 projects the
         // stress onto each segment as `cos(PHI - PHI0)` (`w2_4_win.f90:543`).

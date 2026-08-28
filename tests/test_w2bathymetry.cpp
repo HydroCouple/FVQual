@@ -887,3 +887,108 @@ TEST(W2Bathymetry, AnAdaptivelyPlannedDeGrayHoldsTheSameWater)
             << " columns";
     }
 }
+
+TEST(W2TimeSeries, ARecordThatWrapsOntoFollowingLinesIsReadWhole)
+{
+    // W2's fixed-format files put one value per segment and simply continue onto
+    // the next line when they run out of room, with no Julian day to mark the
+    // continuation. DeGray's wind sheltering file carries 32 values per record
+    // across four lines while its header names only nine, so neither the line
+    // nor the header says how wide a record is — the caller does, from the
+    // bathymetry.
+    const std::string text =
+        "a wrapped file\n"
+        "\n"
+        "    JDAY     WSC     WSC     WSC\n"
+        "     1.0    0.90    0.90    0.90\n"
+        "            0.80    0.80\n"
+        "   100.0    0.50    0.50    0.50\n"
+        "            0.40    0.40\n";
+
+    FVQual::IO::W2TimeSeries series;
+    std::string             message;
+    std::istringstream      input(text);
+
+    ASSERT_TRUE(series.parse(input, "wrapped", /*valuesPerRecord=*/5, message)) << message;
+
+    EXPECT_EQ(series.columnCount(), 5);
+    EXPECT_EQ(series.rowCount(), 2);
+
+    EXPECT_DOUBLE_EQ(series.valueAt(1.0, 0), 0.90);
+    EXPECT_DOUBLE_EQ(series.valueAt(1.0, 4), 0.80);
+    EXPECT_DOUBLE_EQ(series.valueAt(100.0, 0), 0.50);
+    EXPECT_DOUBLE_EQ(series.valueAt(100.0, 4), 0.40);
+}
+
+TEST(W2TimeSeries, AWrappedFileIsStillRefusedWithoutTheRecordWidth)
+{
+    // The old behaviour, kept: with no width given, a continuation line reads as
+    // a data row whose first value is mistaken for a Julian day. Refusing is
+    // right — this file was silently failing to load in the DeGray driver, and
+    // a model that quietly runs without a calibrated input looks exactly like
+    // one that has it.
+    const std::string text =
+        "a wrapped file\n"
+        "\n"
+        "    JDAY     WSC     WSC     WSC\n"
+        "     1.0    0.90    0.90    0.90\n"
+        "            0.80    0.80\n";
+
+    FVQual::IO::W2TimeSeries series;
+    std::string             message;
+    std::istringstream      input(text);
+
+    EXPECT_FALSE(series.parse(input, "wrapped", message));
+    EXPECT_NE(message.find("wrapped"), std::string::npos);
+}
+
+TEST(W2TimeSeries, SingleLineFilesAreUnaffectedByTheWrappingSupport)
+{
+    // met.npt and its kind must read exactly as before, whether or not a width
+    // is supplied, or the change has broken every existing model to fix one.
+    const std::string text =
+        "met\n"
+        "\n"
+        "    JDAY    TAIR    TDEW\n"
+        "     1.0    10.0     5.0\n"
+        "     2.0    12.0     6.0\n";
+
+    FVQual::IO::W2TimeSeries loose, exact;
+    std::string             m1, m2;
+    std::istringstream      a(text), b(text);
+
+    ASSERT_TRUE(loose.parse(a, "met", m1)) << m1;
+    ASSERT_TRUE(exact.parse(b, "met", /*valuesPerRecord=*/2, m2)) << m2;
+
+    EXPECT_EQ(loose.columnCount(), 2);
+    EXPECT_EQ(exact.columnCount(), 2);
+    EXPECT_DOUBLE_EQ(loose.valueAt(2.0, 1), exact.valueAt(2.0, 1));
+    EXPECT_DOUBLE_EQ(loose.valueAt(2.0, 1), 6.0);
+}
+
+TEST(W2TimeSeries, DeGraysWindShelteringFileLoads)
+{
+    // The real file, and the real reason this work happened: DeGray is
+    // calibrated with a wind sheltering coefficient of 0.90, and FVQual was
+    // running it at 1.0 because the file would not parse. Stress goes as the
+    // square of speed, so that is a 23% overestimate of the wind stress driving
+    // the overturning cell the interior warm bias is blamed on.
+    if (!haveDeGray())
+        GTEST_SKIP() << "DeGray inputs not available";
+
+    W2Bathymetry bathymetry;
+    std::string  message;
+
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
+
+    FVQual::IO::W2TimeSeries sheltering;
+
+    ASSERT_TRUE(sheltering.read(deGrayFile("wsc.npt"), bathymetry.segmentCount(),
+                                message))
+        << message;
+
+    EXPECT_EQ(sheltering.columnCount(), bathymetry.segmentCount());
+
+    for (int c = 0; c < sheltering.columnCount(); ++c)
+        EXPECT_NEAR(sheltering.valueAt(64.5, c), 0.90, 1.0e-9) << "segment " << c;
+}

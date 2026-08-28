@@ -6,6 +6,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — DeGray's calibrated wind sheltering was being ignored
+
+DeGray ships `wsc.npt` with a wind sheltering coefficient of **0.90** for every
+segment. FVQual was running at 1.0. Wind stress goes as the square of speed, so
+that is a **23% overestimate of the wind stress** driving the overturning cell
+the interior warm bias is blamed on. This is a calibrated input present in the
+dataset and unread — the same class as cloud cover in tenths read as a fraction,
+not a tuning knob.
+
+**It would not parse.** W2's fixed-format files put one value per segment and
+continue onto the following lines when they run out of room, with no Julian day
+to mark the continuation. `wsc.npt` carries 32 values per record across four
+lines while its header names nine, so neither the line nor the header says how
+wide a record is. `W2TimeSeries` gained a `valuesPerRecord` overload; the caller
+supplies the count from the bathymetry. Single-line files are untouched.
+
+**And the failure was silent.** `read()` returned false, the driver carried on
+with no sheltering, and a model quietly running without a calibrated input looks
+exactly like one that has it. The driver now reports which it is at startup, and
+that report is what caught the parse failure.
+
+Matched comparison against the measured casts, same six casts and 284
+measurements, one lane, sheltering the only difference:
+
+| band | before | after |
+|---|---|---|
+| 10–20 m | +0.76 | **+0.49** |
+| 20–30 m | +2.60 | **+2.38** |
+| 30–60 m | +2.98 | **+2.78** |
+| overall RMSE | 2.92 °C | **2.66 °C** |
+
+Every interior band improves, by 0.20–0.27 °C — two to three times the 0.08 °C
+reproducibility floor, so this is a real change and not mesh jitter. It accounts
+for roughly 7% of the interior bias, which leaves most of it unexplained.
+
+**What this ruled out along the way.** Sources off — no inflow, no dam release —
+moves the interior bias by only 0.22 °C of +3.2 to +3.65 °C, so the density-placed
+tributary and the selective withdrawal are not carrying it either. Mixing,
+schematisation, conveyance friction and now sources are all excluded; the wind
+stress is the one lever that has moved it.
+
 ### Added — non-uniform lateral refinement, and a better-controlled answer
 
 Uniform refinement refines the wrong place. `planLateralCells(maxLanes,

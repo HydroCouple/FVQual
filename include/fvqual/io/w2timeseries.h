@@ -37,6 +37,30 @@ class FVQual_EXPORT W2TimeSeries
 public:
     [[nodiscard]] bool read(const std::string &path, std::string &message);
 
+    /*!
+     * \brief Reads a file whose records wrap across several lines.
+     *
+     * **Why this is needed.** W2's fixed-format files put one value per segment,
+     * and a reservoir with more segments than fit a line simply continues onto
+     * the next one, with no Julian day to mark it. DeGray's `wsc.npt` carries 31
+     * wind-sheltering values per record across four lines, and its header names
+     * nine — so neither the line nor the header says how wide a record is. The
+     * caller does, from the bathymetry.
+     *
+     * With \p valuesPerRecord at 0 this is exactly \ref read().
+     *
+     * \param[in]  path            File to read.
+     * \param[in]  valuesPerRecord Values after the Julian day, or 0 to take the
+     *                             count from the first data line.
+     * \param[out] message         Failure description, with a line number.
+     */
+    [[nodiscard]] bool read(const std::string &path, int valuesPerRecord,
+                            std::string &message);
+
+    //! As above, from an open stream.
+    [[nodiscard]] bool parse(std::istream &input, const std::string &origin,
+                             int valuesPerRecord, std::string &message);
+
     [[nodiscard]] bool parse(std::istream &input, const std::string &origin,
                              std::string &message);
 
