@@ -535,12 +535,25 @@ bool W2Bathymetry::applyHypsography(Mesh::LayeredMesh &mesh, std::string &messag
 namespace {
 
 /*!
- * \brief Overlap of [a, b] with the section [-halfWidth, +halfWidth] (m).
+ * \brief Overlap of lane [a, b] with the section [-halfWidth, +halfWidth] (m).
+ *
+ * The outermost lanes extend outward without bound, which is what makes the
+ * shares sum to the full width `2 * halfWidth` at *every* stage rather than only
+ * at the one the lane spans were laid out for. It matters: in DeGray all thirty
+ * segments are wider below the top of the grid than at the initial surface — by
+ * up to 4.1x — because the grid extends 14 m above the water. Lanes bounded at
+ * the surface width would silently discard that section as the stage rose, and a
+ * single-lane mesh would then not reproduce the laterally averaged model it is
+ * supposed to be the control for.
+ *
+ * Physically it says the outer cells take the extra width when the reservoir
+ * spreads above its initial stage, which is what a bank does.
  */
-double lateralOverlap(double a, double b, double halfWidth)
+double lateralOverlap(double a, double b, double halfWidth, bool openInner,
+                      bool openOuter)
 {
-    const double lower = std::max(a, -halfWidth);
-    const double upper = std::min(b, halfWidth);
+    const double lower = openInner ? -halfWidth : std::max(a, -halfWidth);
+    const double upper = openOuter ? halfWidth : std::min(b, halfWidth);
 
     return std::max(0.0, upper - lower);
 }
@@ -664,7 +677,8 @@ bool W2Bathymetry::toLateralMeshDefinition(int lateralCells,
 
             for (int k = 0; k < layerCount(); ++k)
             {
-                if (lateralOverlap(a, b, 0.5 * width(k, segment)) > 0.0)
+                if (lateralOverlap(a, b, 0.5 * width(k, segment), l == 0,
+                                   l + 1 == lanes) > 0.0)
                     lowest = std::min(lowest, layerBottom(k));
             }
 
@@ -719,7 +733,8 @@ bool W2Bathymetry::applyLateralHypsography(Mesh::LayeredMesh &mesh, int lateralC
             // volume comes out exact.
             for (int k = layerCount() - 1; k >= 0; --k)
             {
-                const double overlap = lateralOverlap(a, b, 0.5 * width(k, segment));
+                const double overlap = lateralOverlap(a, b, 0.5 * width(k, segment),
+                                                      l == 0, l + 1 == lanes);
 
                 if (overlap <= 0.0)
                     continue;

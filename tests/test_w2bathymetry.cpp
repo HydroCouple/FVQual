@@ -666,3 +666,91 @@ TEST(W2Bathymetry, LateralExpansionGivesOuterLanesAHigherBed)
     EXPECT_NEAR(bed[deepestSegment * kLanes],
                 bed[deepestSegment * kLanes + kLanes - 1], 1.0e-9);
 }
+
+TEST(W2Bathymetry, OneLaneReproducesTheLaterallyAveragedMeshExactly)
+{
+    // The control has to be the same model, or the widening comparison measures
+    // two changes at once. At one lane the expansion must reduce to
+    // toMeshDefinition + applyHypsography bit for bit — same nodes, same beds,
+    // same storage curves, same volume.
+    //
+    // This did not hold at first. Lane spans were bounded by the width at the
+    // initial surface, and every one of DeGray's thirty segments is wider below
+    // the top of the grid than at the water line — by up to 4.1x, because the
+    // grid extends 14 m above the surface. Those layers were being clipped away.
+    // The volume gate did not catch it, since the clipped layers hold no water
+    // at the initial stage; a differing internal step count did.
+    if (!haveDeGray())
+        GTEST_SKIP() << "DeGray bathymetry not available";
+
+    W2Bathymetry bathymetry;
+    std::string  message;
+
+    ASSERT_TRUE(bathymetry.read(deGrayPath(), kDeGrayBottom, message)) << message;
+
+    HydroCouple::SDK::IO::MeshDefinition flat;
+    HydroCouple::SDK::IO::MeshDefinition wide;
+    std::vector<double>                  flatBed;
+    std::vector<double>                  wideBed;
+
+    ASSERT_TRUE(bathymetry.toMeshDefinition(flat, flatBed, message)) << message;
+    ASSERT_TRUE(bathymetry.toLateralMeshDefinition(1, wide, wideBed, message)) << message;
+
+    ASSERT_EQ(flat.nodeX.size(), wide.nodeX.size());
+    ASSERT_EQ(flat.faceNodes.size(), wide.faceNodes.size());
+    EXPECT_EQ(flat.faceNodes, wide.faceNodes);
+    EXPECT_EQ(flat.faceNodeOffsets, wide.faceNodeOffsets);
+
+    for (size_t i = 0; i < flat.nodeX.size(); ++i)
+    {
+        EXPECT_DOUBLE_EQ(flat.nodeX[i], wide.nodeX[i]) << "node " << i;
+        EXPECT_DOUBLE_EQ(flat.nodeY[i], wide.nodeY[i]) << "node " << i;
+    }
+
+    ASSERT_EQ(flatBed.size(), wideBed.size());
+
+    for (size_t i = 0; i < flatBed.size(); ++i)
+        EXPECT_DOUBLE_EQ(flatBed[i], wideBed[i]) << "column " << i;
+
+    // And the storage curves, through the volume they produce at two stages —
+    // the second one above the initial surface, which is precisely where the
+    // clipping used to bite and where a run that drew the reservoir down and
+    // refilled it would have diverged.
+    const auto volumeOf = [&](bool lateral, double stage) {
+        HydroCouple::SDK::IO::MeshDefinition definition;
+        std::vector<double>                  bed;
+        std::string                          local;
+
+        EXPECT_TRUE(lateral
+                        ? bathymetry.toLateralMeshDefinition(1, definition, bed, local)
+                        : bathymetry.toMeshDefinition(definition, bed, local))
+            << local;
+
+        HorizontalMesh horizontal;
+        EXPECT_TRUE(horizontal.build(definition, local)) << local;
+
+        for (int64_t f = 0; f < horizontal.faceCount(); ++f)
+            horizontal.faceBed()[static_cast<size_t>(f)] = bed[static_cast<size_t>(f)];
+
+        SigmaSpec spec;
+        spec.layerCount        = 30;
+        spec.minLayerThickness = 0.0;
+
+        LayeredMesh layered;
+        EXPECT_TRUE(layered.build(horizontal, spec, stage, local)) << local;
+
+        EXPECT_TRUE(lateral ? bathymetry.applyLateralHypsography(layered, 1, local)
+                            : bathymetry.applyHypsography(layered, local))
+            << local;
+
+        const std::vector<double> surface(
+            static_cast<size_t>(layered.columnCount()), stage);
+        EXPECT_TRUE(layered.updateSurface(surface, local)) << local;
+
+        return layered.totalVolume();
+    };
+
+    for (double stage : {123.8, 130.0})
+        EXPECT_DOUBLE_EQ(volumeOf(true, stage), volumeOf(false, stage))
+            << "stage " << stage;
+}

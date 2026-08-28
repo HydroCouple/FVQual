@@ -60,6 +60,28 @@ constexpr double kEndDay          = 358.7;
 constexpr int kDefaultLayers = 30;
 
 /*!
+ * \brief Lateral cells per W2 segment, overridable through `FVQUAL_LANES`.
+ *
+ * W2 is laterally averaged, so the default of 1 reproduces the schematisation
+ * exactly. Above 1 the same bathymetry is laid out across the channel — no new
+ * survey data, just the width curve's lateral information used as lateral
+ * information — which is the only way to ask whether DeGray's interior warm
+ * bias is the one-segment grid rather than the physics.
+ */
+int lateralCells()
+{
+    if (const char *value = std::getenv("FVQUAL_LANES"))
+    {
+        const int lanes = std::atoi(value);
+
+        if (lanes >= 1)
+            return lanes;
+    }
+
+    return 1;
+}
+
+/*!
  * \brief Layer count, overridable through `FVQUAL_LAYERS`.
  *
  * A knob for convergence testing, not for configuration. If an error shrinks as
@@ -198,7 +220,9 @@ int main(int argc, char **argv)
     HydroCouple::SDK::IO::MeshDefinition definition;
     std::vector<double>                  bed;
 
-    if (!bathymetry.toMeshDefinition(definition, bed, message))
+    const int lanes = lateralCells();
+
+    if (!bathymetry.toLateralMeshDefinition(lanes, definition, bed, message))
     {
         std::cerr << "mesh: " << message << '\n';
         return 1;
@@ -248,7 +272,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!nohyps && !bathymetry.applyHypsography(layered, message))
+    if (!nohyps && !bathymetry.applyLateralHypsography(layered, lanes, message))
     {
         std::cerr << "hypsography: " << message << '\n';
         return 1;
@@ -368,19 +392,60 @@ int main(int argc, char **argv)
 
     // Inflow at the head of the reservoir, density-placed so a cold tributary
     // finds its own level; withdrawal at the dam.
-    FVQual::Forcing::Source tributary;
-    tributary.column    = 0;
-    tributary.placement = FVQual::Forcing::Placement::DensityMatched;
+    // With more than one lane the head segment is lanes 0..lanes-1 and the dam
+    // is the last lanes columns. Attaching the whole discharge to a single lane
+    // would drive a jet down one side of the reservoir, so it is split across
+    // the lanes in proportion to their surface area — the share of the section
+    // each one actually presents to the flow.
+    std::vector<int>    inflowIndices;
+    std::vector<int>    outflowIndices;
+    std::vector<double> inflowShare;
+    std::vector<double> outflowShare;
 
-    const int inflowIndex = solver.sources().add(tributary, message);
+    {
+        const std::vector<double> &area = horizontal.faceArea();
 
-    FVQual::Forcing::Source release;
-    release.column    = layered.columnCount() - 1;
-    release.placement = FVQual::Forcing::Placement::Uniform;
+        double headArea = 0.0;
+        double damArea  = 0.0;
 
-    const int outflowIndex = solver.sources().add(release, message);
+        for (int l = 0; l < lanes; ++l)
+        {
+            headArea += area[static_cast<size_t>(l)];
+            damArea +=
+                area[static_cast<size_t>(layered.columnCount() - lanes + l)];
+        }
 
-    if (inflowIndex < 0 || outflowIndex < 0)
+        for (int l = 0; l < lanes; ++l)
+        {
+            FVQual::Forcing::Source tributary;
+            tributary.column    = l;
+            tributary.placement = FVQual::Forcing::Placement::DensityMatched;
+
+            const int index = solver.sources().add(tributary, message);
+
+            if (index < 0)
+                break;
+
+            inflowIndices.push_back(index);
+            inflowShare.push_back(area[static_cast<size_t>(l)] / headArea);
+
+            FVQual::Forcing::Source release;
+            release.column    = layered.columnCount() - lanes + l;
+            release.placement = FVQual::Forcing::Placement::Uniform;
+
+            const int outIndex = solver.sources().add(release, message);
+
+            if (outIndex < 0)
+                break;
+
+            outflowIndices.push_back(outIndex);
+            outflowShare.push_back(
+                area[static_cast<size_t>(layered.columnCount() - lanes + l)] / damArea);
+        }
+    }
+
+    if (static_cast<int>(inflowIndices.size()) != lanes ||
+        static_cast<int>(outflowIndices.size()) != lanes)
     {
         std::cerr << "sources: " << message << '\n';
         return 1;
@@ -467,18 +532,39 @@ int main(int argc, char **argv)
         const double qin  = nosources ? 0.0 : inflow.valueAt(day, 0);
         const double qout = nosources ? 0.0 : outflow.valueAt(day, 0);
 
-        if (!solver.sources().setDischarge(inflowIndex, qin, message) ||
-            !solver.sources().setDischarge(outflowIndex, -qout, message))
+        bool sourcesOk = true;
+
+        for (int l = 0; l < lanes && sourcesOk; ++l)
+        {
+            sourcesOk =
+                solver.sources().setDischarge(
+                    inflowIndices[static_cast<size_t>(l)],
+                    qin * inflowShare[static_cast<size_t>(l)], message) &&
+                solver.sources().setDischarge(
+                    outflowIndices[static_cast<size_t>(l)],
+                    -qout * outflowShare[static_cast<size_t>(l)], message);
+        }
+
+        if (!sourcesOk)
         {
             std::cerr << "discharge: " << message << '\n';
             return 1;
         }
 
-        if (!solver.sources().setInflowValue(inflowIndex, temperature, temperature,
-                                             inflowTemperature.valueAt(day, 0), message))
+        // Every lane, not just the first. Lanes that carried discharge without
+        // a temperature would have injected water at the default and quietly
+        // cooled the head of the reservoir in proportion to the lane count.
+        const double inflowT = inflowTemperature.valueAt(day, 0);
+
+        for (int l = 0; l < lanes; ++l)
         {
-            std::cerr << "inflow temperature: " << message << '\n';
-            return 1;
+            if (!solver.sources().setInflowValue(inflowIndices[static_cast<size_t>(l)],
+                                                 temperature, temperature, inflowT,
+                                                 message))
+            {
+                std::cerr << "inflow temperature: " << message << '\n';
+                return 1;
+            }
         }
 
         const double dt = std::min(solver.stableTimeStep(), 300.0);
