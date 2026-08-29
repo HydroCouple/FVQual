@@ -6,6 +6,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the evaporative wind function was driven at the wrong reference height
+
+CE-QUAL-W2 carries two winds from one measurement, through the logarithmic
+profile `U(z) = U(h)·ln(z/z₀)/ln(h/z₀)`: **10 m** for the surface momentum stress
+and **2 m** for the evaporative wind function. FVQual drove both from one wind.
+DeGray's control file states `WINDH = 10`, so its wind function — calibrated at
+2 m — was being applied to a wind 1/0.767 too fast, inflating that function's
+quadratic term by about 1.7×.
+
+`Meteorology` gained `windHeight`, `evaporationHeight` and `windRoughness`. They
+default equal, which disables the conversion, so no existing model moves; three
+gates cover that, the conversion against the profile computed independently, and
+that the momentum stress does *not* see the evaporation height — the last matters
+because wind stress is the one lever that moves DeGray's interior bias.
+
+**Measured, its effect is at the noise floor and overall it is very slightly
+worse.** Same six casts, 284 measurements, on top of wind sheltering:
+
+| band | sheltering only | + 2 m evaporative wind |
+|---|---|---|
+| 0–5 m | −1.82 | **−1.76** |
+| 5–10 m | −1.09 | **−1.04** |
+| 20–30 m | +2.38 | +2.40 |
+| 30–60 m | +2.78 | +2.80 |
+| overall RMSE | **2.66 °C** | 2.68 °C |
+
+The surface warms as predicted — excess evaporation was cooling it, and the
+surface bands were the model's coldest — but by 0.05–0.06 °C, below the 0.08 °C
+reproducibility floor, while the interior drifts the other way by 0.02. It is
+kept because it is what W2 demonstrably does and the physics is right, not
+because it improved the fit. It did not.
+
+The 1.7× applies to the function's *quadratic term*, not the function: with
+FVQual's coefficients the wind-driven part is about a third of the total at
+DeGray's 3 m/s mean, so the whole function moves ~13% and the temperature effect
+is correspondingly small.
+
 ### Fixed — DeGray's calibrated wind sheltering was being ignored
 
 DeGray ships `wsc.npt` with a wind sheltering coefficient of **0.90** for every

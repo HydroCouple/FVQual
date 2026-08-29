@@ -128,6 +128,32 @@ struct FVQual_EXPORT Meteorology
     double windExponent = 2.0;
 
     /*!
+     * \brief Height the stored \ref windSpeed refers to (m), and the height the
+     *        evaporative wind function is calibrated for (m).
+     *
+     * **Why two heights for one wind.** Momentum stress and the evaporative wind
+     * function are calibrated against different reference heights, and CE-QUAL-W2
+     * carries both: it scales the measured wind to 10 m for the surface stress
+     * and to 2 m for the wind function, through the logarithmic profile
+     *
+     *     U(z) = U(h) * ln(z / z0) / ln(h / z0).
+     *
+     * FVQual drove both from one wind. With DeGray's anemometer at 10 m and a
+     * roughness length of 0.01 m the 2 m wind is 0.767 of it, so applying
+     * coefficients calibrated at 2 m to the 10 m wind inflates the quadratic
+     * term by 1/0.767^2, about 1.7x. Excess evaporation cools the surface, and
+     * the measured surface bias is 1.9 °C too cold.
+     *
+     * Setting \ref evaporationHeight equal to \ref windHeight disables the
+     * conversion, which is what a model with no stated heights should do.
+     */
+    double windHeight        = 10.0;
+    double evaporationHeight = 10.0;
+
+    //! Aerodynamic roughness length for that profile (m).
+    double windRoughness = 0.01;
+
+    /*!
      * \brief Psychrometric constant (Pa/K) at standard pressure.
      *
      * Ties the sensible flux to the latent one: the Bowen ratio is

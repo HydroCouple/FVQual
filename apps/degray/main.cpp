@@ -467,6 +467,14 @@ int main(int argc, char **argv)
     // card: 9.2 + 0.46 W^2 in W2's units. The coefficients here are in SI, so
     // only the shape carries over.
     solver.meteorology().base.windExponent = 2.0;
+
+    // DeGray's control file states WINDH = 10 m, and W2 drives its evaporative
+    // wind function from the 2 m wind while the surface stress uses the 10 m
+    // one. Applying coefficients calibrated at 2 m to a 10 m wind inflates the
+    // quadratic term by about 1.7x, and the model's surface runs 1.9 C cold.
+    solver.meteorology().base.windHeight        = 10.0;
+    solver.meteorology().base.evaporationHeight = 2.0;
+    solver.meteorology().base.windRoughness     = 0.01;
     if (nowind) solver.meteorology().base.dragCoefficient = 0.0;
     solver.enableMeteorology(/*attenuation=*/0.45);
 

@@ -39,6 +39,8 @@ using FVQual::Hydro::InternalModeOptions;
 using FVQual::Hydro::InternalModeSolver;
 using FVQual::Hydro::Meteorology;
 using FVQual::Hydro::saturationVapourPressure;
+using FVQual::Hydro::WindStress;
+using FVQual::Hydro::windStress;
 using FVQual::Hydro::surfaceHeatFlux;
 using FVQual::Mesh::HorizontalMesh;
 using FVQual::Mesh::LayeredMesh;
@@ -791,4 +793,85 @@ TEST(HeatBudget, AnOutOfRangeCloudFractionCannotRunAway)
         EXPECT_LT(equilibriumTemperature(weather), weather.airTemperature + 20.0)
             << "cloud cover " << bad;
     }
+}
+
+TEST(HeatBudget, EqualReferenceHeightsLeaveTheWindFunctionUntouched)
+{
+    // The default, and what every existing model gets. If this moved, the fix
+    // for one dataset would have silently rewritten every other result.
+    Meteorology weather;
+    weather.airTemperature = 18.0;
+    weather.dewPoint       = 8.0;
+    weather.windSpeed      = 5.0;
+
+    const HeatFluxTerms plain = surfaceHeatFlux(weather, 20.0);
+
+    weather.windHeight        = 10.0;
+    weather.evaporationHeight = 10.0;
+    weather.windRoughness     = 0.01;
+
+    const HeatFluxTerms stated = surfaceHeatFlux(weather, 20.0);
+
+    EXPECT_DOUBLE_EQ(plain.latent, stated.latent);
+    EXPECT_DOUBLE_EQ(plain.sensible, stated.sensible);
+}
+
+TEST(HeatBudget, TheEvaporativeWindIsBroughtToItsOwnReferenceHeight)
+{
+    // CE-QUAL-W2 scales the measured wind to 10 m for the surface stress and to
+    // 2 m for the evaporative wind function. DeGray's anemometer is at 10 m, so
+    // driving the wind function at 10 m applies coefficients calibrated at 2 m
+    // to a wind that is 1/0.767 too fast — and since the function is quadratic,
+    // the wind-driven part of it comes out about 1.7x too large.
+    Meteorology weather;
+    weather.airTemperature = 18.0;
+    weather.dewPoint       = 8.0;
+    weather.windSpeed      = 5.0;
+    weather.windRoughness  = 0.01;
+
+    weather.windHeight        = 10.0;
+    weather.evaporationHeight = 10.0;
+    const HeatFluxTerms atTen = surfaceHeatFlux(weather, 20.0);
+
+    weather.evaporationHeight = 2.0;
+    const HeatFluxTerms atTwo = surfaceHeatFlux(weather, 20.0);
+
+    // Evaporating, so latent is negative; the corrected one must cool less.
+    ASSERT_LT(atTen.latent, 0.0);
+    EXPECT_GT(atTwo.latent, atTen.latent) << "the 2 m wind must evaporate less";
+
+    // Against the profile computed here rather than read back from the code.
+    const double ratio = std::log(2.0 / 0.01) / std::log(10.0 / 0.01);
+    EXPECT_NEAR(ratio, 0.767, 0.002);
+
+    const double expected =
+        weather.evaporationA + weather.evaporationB * std::pow(5.0 * ratio, 2.0);
+    const double drove =
+        weather.evaporationA + weather.evaporationB * std::pow(5.0, 2.0);
+
+    // The fluxes are proportional to the wind function, so their ratio is it.
+    EXPECT_NEAR(atTwo.latent / atTen.latent, expected / drove, 1.0e-9);
+
+    // And it must be a real reduction, not a rounding difference.
+    EXPECT_LT(expected / drove, 0.85);
+}
+
+TEST(HeatBudget, MomentumStressIgnoresTheEvaporationHeight)
+{
+    // The stress is calibrated at the height the wind is stored at. If the
+    // evaporation correction leaked into it, this fix would have quietly
+    // weakened the wind stress too — and wind stress is the one lever that
+    // moves DeGray's interior bias.
+    Meteorology weather;
+    weather.windSpeed     = 6.0;
+    weather.windRoughness = 0.01;
+    weather.windHeight    = 10.0;
+
+    weather.evaporationHeight = 10.0;
+    const WindStress full = windStress(weather);
+
+    weather.evaporationHeight = 2.0;
+    const WindStress reduced = windStress(weather);
+
+    EXPECT_DOUBLE_EQ(full.magnitude(), reduced.magnitude());
 }

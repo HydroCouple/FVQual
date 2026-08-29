@@ -70,8 +70,22 @@ HeatFluxTerms surfaceHeatFlux(const Meteorology &weather,
 
     // ── Latent and sensible ───────────────────────────────────────────────
 
-    // The wind function, shared by both: they differ only in what drives them.
-    const double speed = std::max(0.0, weather.windSpeed);
+    // The wind function, shared by latent and sensible: they differ only in what
+    // drives them. Its coefficients are calibrated at their own reference
+    // height, which need not be the height the wind was measured at — see the
+    // note on Meteorology::evaporationHeight — so the wind is brought to that
+    // height first through the logarithmic profile.
+    const double measured = std::max(0.0, weather.windSpeed);
+
+    double speed = measured;
+
+    if (weather.evaporationHeight != weather.windHeight &&
+        weather.windRoughness > 0.0 && weather.windHeight > weather.windRoughness &&
+        weather.evaporationHeight > weather.windRoughness)
+    {
+        speed = measured * std::log(weather.evaporationHeight / weather.windRoughness) /
+                std::log(weather.windHeight / weather.windRoughness);
+    }
 
     const double wind =
         weather.evaporationA +
