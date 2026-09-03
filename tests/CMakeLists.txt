@@ -35,6 +35,7 @@ add_executable(fvqual_tests
     test_turbulence.cpp
     test_verticalcoordinate.cpp
     test_fvqualcomponent.cpp
+    test_fvqualplugin.cpp
     test_conveyance.cpp
     test_macdonald.cpp
     test_kinetics_numerics.cpp
@@ -62,7 +63,8 @@ set(FVQual_TEST_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/tests/output")
 file(MAKE_DIRECTORY "${FVQual_TEST_OUTPUT_DIR}")
 
 target_compile_definitions(fvqual_tests
-    PRIVATE FVQual_TEST_OUTPUT_DIR="${FVQual_TEST_OUTPUT_DIR}")
+    PRIVATE FVQual_TEST_OUTPUT_DIR="${FVQual_TEST_OUTPUT_DIR}"
+    PRIVATE FVQUAL_COMPONENTS_DIR="${CMAKE_BINARY_DIR}/components")
 
 if(FVQual_USE_NETCDF)
     target_compile_definitions(fvqual_tests PRIVATE FVQual_HAVE_NETCDF)
@@ -71,6 +73,8 @@ endif()
 add_subdirectory(capi)
 
 include(GoogleTest)
+add_dependencies(fvqual_tests fvqual_component)
+
 gtest_discover_tests(fvqual_tests
     DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)

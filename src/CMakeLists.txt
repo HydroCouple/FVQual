@@ -34,6 +34,7 @@ add_library(fvqual_core
     io/layeredugridwriter.cpp
     component/sigmaverticalcoordinate.cpp
     component/fvqualcomponent.cpp
+    component/fvqualcomponentinfo.cpp
     capi/capi_engine.cpp
     capi/capi_mesh.cpp
     capi/capi_sim.cpp
@@ -102,3 +103,19 @@ install(TARGETS fvqual_core
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
         ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+
+# ── The loadable component plugin ─────────────────────────────────────────
+#
+# FVQual published through the SDK's stamped ABI convention
+# (hydrocouple_component_abi_v1 / hydrocouple_component_info_v1), so
+# HydroCoupleComposer's registry, the headless runner, and the Python
+# loader all pick it up identically. The core stays a plain library an
+# embedder links; the entry points live here, where a loader looks.
+add_library(fvqual_component MODULE component/fvqualplugin.cpp)
+add_library(FVQual::fvqual_component ALIAS fvqual_component)
+target_link_libraries(fvqual_component PRIVATE FVQual::fvqual_core)
+set_target_properties(fvqual_component PROPERTIES
+    OUTPUT_NAME fvqual-component
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/components")
+install(TARGETS fvqual_component
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/hydrocouple/components)
