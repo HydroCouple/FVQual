@@ -37,6 +37,7 @@
 #define FVQual_COMPONENT_FVQUALCOMPONENT_H
 
 #include "fvqual/component/sigmaverticalcoordinate.h"
+#include "hydrocouplesdk/spatial/polyhedralsurfaceargument.h"
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/internalmode.h"
 #include "fvqual/mesh/horizontalmesh.h"
@@ -172,6 +173,8 @@ private:
     //    below own them across that cycle.
     HydroCouple::SDK::Argument1DInt    *m_geometryInts    = nullptr;
     HydroCouple::SDK::Argument1DDouble *m_geometryDoubles = nullptr;
+    HydroCouple::SDK::Spatial::PolyhedralSurfaceArgument *m_meshArgument =
+        nullptr;
     HydroCouple::SDK::Input1DDouble    *m_airTemperature  = nullptr;
     HydroCouple::SDK::Spatial::LayeredMeshOutputDouble *m_temperature = nullptr;
 
@@ -180,6 +183,8 @@ private:
     std::unique_ptr<HydroCouple::SDK::Quantity>  m_temperatureQuantity;
     std::unique_ptr<HydroCouple::SDK::Argument1DInt>    m_ownedGeometryInts;
     std::unique_ptr<HydroCouple::SDK::Argument1DDouble> m_ownedGeometryDoubles;
+    std::unique_ptr<HydroCouple::SDK::Spatial::PolyhedralSurfaceArgument>
+        m_ownedMesh;
     std::unique_ptr<HydroCouple::SDK::Input1DDouble>    m_ownedAirTemperature;
     std::unique_ptr<HydroCouple::SDK::Spatial::LayeredMeshOutputDouble> m_ownedTemperature;
 

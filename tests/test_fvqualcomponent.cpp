@@ -76,7 +76,9 @@ TEST(FVQualComponent, ArgumentsAreReadableBeforeInitialize)
     // The SDK creates arguments lazily on first read, so a configuration loader
     // can populate them while the component is still in Created.
     EXPECT_EQ(component.status(), ComponentStatus::Created);
-    ASSERT_EQ(component.arguments().size(), 2u);
+    // geometry_counts, geometry_values, and (since the provider pipeline)
+    // the optional mesh.
+    ASSERT_EQ(component.arguments().size(), 3u);
 }
 
 TEST(FVQualComponent, RunsTheFullLifecycleAndReportsDone)

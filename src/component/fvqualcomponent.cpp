@@ -106,6 +106,16 @@ void FVQualComponent::createArguments()
     (*m_geometryDoubles)[kCouplingInterval]   = m_couplingInterval;
     (*m_geometryDoubles)[kEndTime]            = m_endTime;
     addArgument(m_geometryDoubles);
+
+    // The mesh, when someone has one: a UGRID file, or a mesh generator's
+    // live output through an @from binding. Optional on purpose — the
+    // rectangular basin the geometry arguments describe remains the
+    // default, so an unconfigured component is still a valid one.
+    m_ownedMesh =
+        std::make_unique<HydroCouple::SDK::Spatial::PolyhedralSurfaceArgument>(
+            "mesh", this);
+    m_meshArgument = m_ownedMesh.get();
+    addArgument(m_meshArgument);
 }
 
 bool FVQualComponent::readGeometryArguments(std::string &message)
@@ -135,6 +145,12 @@ bool FVQualComponent::initializeArguments(std::string &message)
 
     if (!readGeometryArguments(message))
         return false;
+
+    // A supplied mesh is the geometry: its faces are the columns, and the
+    // rectangle the geometry arguments describe stands down.
+    if (m_meshArgument != nullptr && m_meshArgument->hasMesh())
+        m_columnCount =
+            static_cast<int>(m_meshArgument->mesh().faceCount());
 
     // Every problem, not the first one. `validate()` reports the same set; this
     // is the gate that stops `initialize()` building a mesh it cannot use.
@@ -224,14 +240,39 @@ void FVQualComponent::prepare()
 
     std::string message;
 
-    if (!m_horizontal.build(rectangularBasin(m_columnCount, m_length, m_width), message))
+    const bool suppliedMesh =
+        m_meshArgument != nullptr && m_meshArgument->hasMesh();
+    const HydroCouple::SDK::IO::MeshDefinition &definition =
+        suppliedMesh ? m_meshArgument->mesh()
+                     : rectangularBasin(m_columnCount, m_length, m_width);
+    if (!m_horizontal.build(definition, message))
     {
         setStatus(ComponentStatus::Failed, "building the horizontal mesh: " + message);
         return;
     }
 
-    for (int64_t f = 0; f < m_horizontal.faceCount(); ++f)
-        m_horizontal.faceBed()[static_cast<size_t>(f)] = -m_depth;
+    // Bed elevation: a supplied mesh that carries node z speaks for
+    // itself (per-face mean); everything else sits at the uniform -depth
+    // the arguments describe.
+    if (suppliedMesh && !definition.nodeZ.empty())
+    {
+        for (int64_t f = 0; f < m_horizontal.faceCount(); ++f)
+        {
+            const int64_t begin = definition.faceNodeOffsets[static_cast<size_t>(f)];
+            const int64_t end   = definition.faceNodeOffsets[static_cast<size_t>(f) + 1];
+            double sum = 0.0;
+            for (int64_t k = begin; k < end; ++k)
+                sum += definition.nodeZ[static_cast<size_t>(
+                    definition.faceNodes[static_cast<size_t>(k)])];
+            m_horizontal.faceBed()[static_cast<size_t>(f)] =
+                sum / static_cast<double>(end - begin);
+        }
+    }
+    else
+    {
+        for (int64_t f = 0; f < m_horizontal.faceCount(); ++f)
+            m_horizontal.faceBed()[static_cast<size_t>(f)] = -m_depth;
+    }
 
     m_sigma.layerCount = m_layerCount;
 
