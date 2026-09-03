@@ -38,6 +38,8 @@
 
 #include "fvqual/component/sigmaverticalcoordinate.h"
 #include "hydrocouplesdk/spatial/polyhedralsurfaceargument.h"
+#include "hydrocouplesdk/temporal/timeseriesargument.h"
+#include "fvqual/kinetics/reactionfile.h"
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/internalmode.h"
 #include "fvqual/mesh/horizontalmesh.h"
@@ -124,6 +126,12 @@ public:
     //! Index of temperature in the species registry, or -1 before prepare().
     [[nodiscard]] int temperatureIndex() const noexcept { return m_temperatureIndex; }
 
+    //! The species registry, for gates and for embedding (as state() is).
+    [[nodiscard]] const FVQual::State::SpeciesRegistry &registry() const noexcept
+    {
+        return m_registry;
+    }
+
 protected:
     void createArguments() override;
     bool initializeArguments(std::string &message) override;
@@ -175,6 +183,12 @@ private:
     HydroCouple::SDK::Argument1DDouble *m_geometryDoubles = nullptr;
     HydroCouple::SDK::Spatial::PolyhedralSurfaceArgument *m_meshArgument =
         nullptr;
+    HydroCouple::SDK::Temporal::TimeSeriesArgumentDouble *m_metArgument =
+        nullptr;
+    HydroCouple::SDK::Argument1DString *m_kineticsFile = nullptr;
+
+    FVQual::Kinetics::ReactionFile m_reactionFile;
+    bool m_hasKinetics = false;
     HydroCouple::SDK::Input1DDouble    *m_airTemperature  = nullptr;
     HydroCouple::SDK::Spatial::LayeredMeshOutputDouble *m_temperature = nullptr;
 
@@ -185,11 +199,15 @@ private:
     std::unique_ptr<HydroCouple::SDK::Argument1DDouble> m_ownedGeometryDoubles;
     std::unique_ptr<HydroCouple::SDK::Spatial::PolyhedralSurfaceArgument>
         m_ownedMesh;
+    std::unique_ptr<HydroCouple::SDK::Temporal::TimeSeriesArgumentDouble>
+        m_ownedMet;
+    std::unique_ptr<HydroCouple::SDK::Argument1DString> m_ownedKineticsFile;
     std::unique_ptr<HydroCouple::SDK::Input1DDouble>    m_ownedAirTemperature;
     std::unique_ptr<HydroCouple::SDK::Spatial::LayeredMeshOutputDouble> m_ownedTemperature;
 
     HydroCouple::SDK::Dimension m_columnDimension{"columns", "Column index"};
     HydroCouple::SDK::Dimension m_settingDimension{"settings", "Setting index"};
+    HydroCouple::SDK::Dimension m_timeDimension{"time", "Time"};
 
     bool m_prepared = false;
 };

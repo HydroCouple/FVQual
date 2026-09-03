@@ -37,6 +37,7 @@ add_executable(fvqual_tests
     test_fvqualcomponent.cpp
     test_fvqualplugin.cpp
     test_fvqualmeshargument.cpp
+    test_fvqualforcingarguments.cpp
     test_conveyance.cpp
     test_macdonald.cpp
     test_kinetics_numerics.cpp

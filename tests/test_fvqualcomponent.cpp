@@ -77,8 +77,8 @@ TEST(FVQualComponent, ArgumentsAreReadableBeforeInitialize)
     // can populate them while the component is still in Created.
     EXPECT_EQ(component.status(), ComponentStatus::Created);
     // geometry_counts, geometry_values, and (since the provider pipeline)
-    // the optional mesh.
-    ASSERT_EQ(component.arguments().size(), 3u);
+    // the optional mesh, met_air_temperature, and kinetics_file.
+    ASSERT_EQ(component.arguments().size(), 5u);
 }
 
 TEST(FVQualComponent, RunsTheFullLifecycleAndReportsDone)

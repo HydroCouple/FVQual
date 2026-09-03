@@ -116,6 +116,28 @@ void FVQualComponent::createArguments()
             "mesh", this);
     m_meshArgument = m_ownedMesh.get();
     addArgument(m_meshArgument);
+
+    // Whole-series meteorology, for a standalone run or an @from binding
+    // from a timeseries provider. Times are DAYS on the model's own clock
+    // (the W2 JDAY convention this lineage already speaks); a wired
+    // air_temperature exchange input takes precedence, being the livelier
+    // data.
+    m_ownedMet = std::make_unique<HydroCouple::SDK::Temporal::TimeSeriesArgumentDouble>(
+        "met_air_temperature", "Air temperature series", this,
+        &m_timeDimension);
+    m_metArgument = m_ownedMet.get();
+    m_metArgument->setIsOptional(true);
+    addArgument(m_metArgument);
+
+    // The kinetics deck: species, constants, rate laws, settling, light.
+    m_ownedKineticsFile = std::make_unique<HydroCouple::SDK::Argument1DString>(
+        "kinetics_file", &m_settingDimension, 1, m_lengthQuantity.get(),
+        this);
+    m_kineticsFile = m_ownedKineticsFile.get();
+    (*m_kineticsFile)[0] = std::string();
+    m_kineticsFile->addFileFilter("Reaction Decks (*.rxn)");
+    m_kineticsFile->setIsOptional(true);
+    addArgument(m_kineticsFile);
 }
 
 bool FVQualComponent::readGeometryArguments(std::string &message)
@@ -151,6 +173,18 @@ bool FVQualComponent::initializeArguments(std::string &message)
     if (m_meshArgument != nullptr && m_meshArgument->hasMesh())
         m_columnCount =
             static_cast<int>(m_meshArgument->mesh().faceCount());
+
+    // The kinetics deck is parsed here so a malformed file fails the
+    // initialize with its line number, before anything is half-built.
+    m_hasKinetics = false;
+    const std::string kineticsPath =
+        m_kineticsFile != nullptr ? (*m_kineticsFile)[0] : std::string();
+    if (!kineticsPath.empty())
+    {
+        if (!m_reactionFile.read(kineticsPath, message))
+            return false;
+        m_hasKinetics = true;
+    }
 
     // Every problem, not the first one. `validate()` reports the same set; this
     // is the gate that stops `initialize()` building a mesh it cannot use.
@@ -290,6 +324,13 @@ void FVQualComponent::prepare()
         return;
     }
 
+    if (m_hasKinetics && !m_reactionFile.registerSpecies(m_registry, message))
+    {
+        setStatus(ComponentStatus::Failed,
+                  "registering kinetics species: " + message);
+        return;
+    }
+
     m_state.allocate(m_layered, m_registry);
 
     if (!m_solver.initialize(m_layered, m_state, m_registry, m_options, message))
@@ -297,6 +338,30 @@ void FVQualComponent::prepare()
         setStatus(ComponentStatus::Failed, "initialising the solver: " + message);
         return;
     }
+
+    if (m_hasKinetics)
+    {
+        if (!m_reactionFile.configure(m_solver, message))
+        {
+            setStatus(ComponentStatus::Failed,
+                      "configuring kinetics: " + message);
+            return;
+        }
+        if (!m_solver.compileReactions(message))
+        {
+            setStatus(ComponentStatus::Failed,
+                      "compiling kinetics: " + message);
+            return;
+        }
+    }
+
+    // A met series makes meteorology mean something. Only the argument
+    // enables it: a wired input keeps the embedder-controlled behaviour it
+    // has always had, so no existing composition changes underneath.
+    if (m_metArgument != nullptr && m_metArgument->timeSeries() &&
+        m_metArgument->timeSeries()->count() > 0 &&
+        !m_solver.meteorologyEnabled())
+        m_solver.enableMeteorology();
 
     // No rebinding of m_vertical here, deliberately. It was bound in
     // createOutputs() to `m_layered`, and `build()` mutates that object in
@@ -323,10 +388,20 @@ void FVQualComponent::update(const std::vector<HydroCouple::IOutput *> &required
 
     applyInputValues();
 
-    // Air temperature, where a provider supplied it. Uniform meteorology would
-    // discard the spatial variation the input carries, so this goes in per
-    // column through the F3.7 forcing field.
-    if (m_airTemperature != nullptr && m_solver.meteorologyEnabled())
+    // Air temperature. A wired exchange input carries spatial variation and
+    // wins; the whole-series argument stands behind it for standalone runs,
+    // applied uniformly at the model's own day count.
+    const bool airInputWired =
+        m_airTemperature != nullptr && m_airTemperature->provider() != nullptr;
+    if (!airInputWired && m_solver.meteorologyEnabled() &&
+        m_metArgument != nullptr && m_metArgument->timeSeries() &&
+        m_metArgument->timeSeries()->count() > 0)
+    {
+        const double air = m_metArgument->getInterpolatedValue(
+            m_solver.time() / 86400.0);
+        m_solver.meteorology().airTemperature.setUniform(air);
+    }
+    else if (m_airTemperature != nullptr && m_solver.meteorologyEnabled())
     {
         std::vector<double> air(static_cast<size_t>(m_columnCount));
         for (int c = 0; c < m_columnCount; ++c)
