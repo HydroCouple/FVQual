@@ -23,6 +23,8 @@
 #include <string>
 #include <string_view>
 
+int runCompositionCommand(int argc, char **argv);
+
 namespace {
 
 using FVQual::IO::UgridReader;
@@ -37,6 +39,7 @@ void printUsage()
         << "3D unstructured finite-volume hydrodynamic and water-quality model\n\n"
         << "Usage:\n"
         << "  fvqual mesh <mesh.nc> [options]   Inspect a UGRID mesh and its sigma grid\n"
+        << "  fvqual run <composition.json>     Run a composition, recording a manifest\n"
         << "  fvqual version                    Print the version\n"
         << "  fvqual help                       Print this message\n\n"
         << "Options for 'mesh':\n"
@@ -217,6 +220,9 @@ int main(int argc, char **argv)
 
     if (command == "mesh")
         return runMeshCommand(argc, argv);
+
+    if (command == "run")
+        return runCompositionCommand(argc, argv);
 
     std::cerr << "error: unknown command '" << command << "'\n\n";
     printUsage();

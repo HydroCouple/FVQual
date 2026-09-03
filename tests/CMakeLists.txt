@@ -38,6 +38,7 @@ add_executable(fvqual_tests
     test_fvqualplugin.cpp
     test_fvqualmeshargument.cpp
     test_fvqualforcingarguments.cpp
+    test_fvqualruncli.cpp
     test_conveyance.cpp
     test_macdonald.cpp
     test_kinetics_numerics.cpp
@@ -66,7 +67,9 @@ file(MAKE_DIRECTORY "${FVQual_TEST_OUTPUT_DIR}")
 
 target_compile_definitions(fvqual_tests
     PRIVATE FVQual_TEST_OUTPUT_DIR="${FVQual_TEST_OUTPUT_DIR}"
-    PRIVATE FVQUAL_COMPONENTS_DIR="${CMAKE_BINARY_DIR}/components")
+    PRIVATE FVQUAL_COMPONENTS_DIR="${CMAKE_BINARY_DIR}/components"
+    PRIVATE FVQUAL_CLI_PATH="$<TARGET_FILE:fvqual>"
+    PRIVATE FVQUAL_COMPOSITIONS_DIR="${CMAKE_SOURCE_DIR}/tests/compositions")
 
 if(FVQual_USE_NETCDF)
     target_compile_definitions(fvqual_tests PRIVATE FVQual_HAVE_NETCDF)
@@ -75,7 +78,7 @@ endif()
 add_subdirectory(capi)
 
 include(GoogleTest)
-add_dependencies(fvqual_tests fvqual_component)
+add_dependencies(fvqual_tests fvqual_component fvqual)
 
 gtest_discover_tests(fvqual_tests
     DISCOVERY_MODE PRE_TEST
