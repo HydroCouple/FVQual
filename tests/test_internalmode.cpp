@@ -311,7 +311,7 @@ TEST(PressureClosure, TiltedSurfaceOverHomogeneousWaterIsExactlyZero)
     // exactly what that residual is: the Boussinesq split approximates
     // 1/rho by 1/rho0, so a uniform anomaly rho' contributes
     // g (rho'/rho0) d(eta)/dx. That is the approximation's own error, not a
-    // discretization artefact, and it is three orders of magnitude below the
+    // discretization artifact, and it is three orders of magnitude below the
     // barotropic term it sits beside.
     const double density = EquationOfState::density(12.0);
     const std::vector<double> realistic(static_cast<size_t>(layered.cellCount()), density);

@@ -27,7 +27,7 @@
  *
  * **`surfaceHeatFlux` is deliberately untouched.** It remains a pure function
  * of one `Meteorology` and one temperature. Only the supplier changes, and
- * `MeteorologyField::at()` materialises the struct the function already takes.
+ * `MeteorologyField::at()` materializes the struct the function already takes.
  *
  * \threadsafety `at()` and the accessors are const and race-free; the setters
  *               are not, and are meant to be called between steps.
@@ -165,7 +165,7 @@ public:
      * Exists so that code written against the old scalar member — including
      * every existing heat-budget gate — keeps compiling and keeps meaning what
      * it meant. A migration that forces its own tests to be rewritten has
-     * discarded the evidence that the behaviour did not change.
+     * discarded the evidence that the behavior did not change.
      */
     MeteorologyField &operator=(const Hydro::Meteorology &weather)
     {

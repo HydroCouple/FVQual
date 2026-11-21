@@ -17,7 +17,7 @@
  * no linear solve, no allocation per step.
  *
  * Numerics:
- * - Cell-centred finite volume in conserved variables (h, hu, hv), one cell
+ * - Cell-centered finite volume in conserved variables (h, hu, hv), one cell
  *   per water column, on the unique-edge list so each face is visited once
  *   and its flux scattered equal-and-opposite to both sides. Mass is
  *   conserved to machine precision by construction.
@@ -249,7 +249,7 @@ public:
     /*!
      * \brief One open boundary.
      *
-     * How many quantities may be imposed is not a modelling preference, it is
+     * How many quantities may be imposed is not a modeling preference, it is
      * counted by the characteristics. In the outward-normal direction the
      * shallow-water equations carry information at speeds `u ± c`. When the
      * flow is subcritical exactly one of those leaves the domain, so exactly
@@ -355,7 +355,7 @@ public:
      * follows when A is independent of stage. A reservoir's is not — DeGray's
      * deepest section is 85 times wider at the surface than at the bed — so
      * with a curve the same inflow raises a wide pool slowly and a narrow gorge
-     * quickly, which is the behaviour storage routing exists to capture.
+     * quickly, which is the behavior storage routing exists to capture.
      *
      * **This corrects continuity only.** With area varying inside a cell the
      * depth-averaged equations become the sub-grid, or porous, shallow-water

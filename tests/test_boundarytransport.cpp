@@ -140,7 +140,7 @@ struct Channel
         thickness = totalDepth / static_cast<double>(layerCount);
 
         // Boundary edges are the vertical walls at each end of the strip: the
-        // ones with no neighbour whose centroid sits at x = 0 or x = length.
+        // ones with no neighbor whose centroid sits at x = 0 or x = length.
         for (int64_t e = 0; e < horizontal.edgeCount(); ++e)
         {
             if (horizontal.edgeRightFace()[static_cast<size_t>(e)] != kNoFace)

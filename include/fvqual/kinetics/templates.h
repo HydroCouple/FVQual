@@ -8,7 +8,7 @@
  * \brief  Ready-made constituent models built on the reaction network (F6.4).
  *
  * Everything in Phase 6 up to this point is machinery: expressions, scopes,
- * light, settling. This is what the machinery is for. A modeller who wants a
+ * light, settling. This is what the machinery is for. A modeler who wants a
  * dissolved-oxygen model should get one, not a blank network and a list of
  * things that would need writing.
  *
@@ -27,7 +27,7 @@
  * registry that is still growing.
  *
  * **Units.** Time is seconds everywhere in the engine, but rate coefficients are
- * quoted per day in every reference a modeller will consult. Each template's
+ * quoted per day in every reference a modeler will consult. Each template's
  * parameters are therefore **per day**, converted internally. The alternative —
  * SI in the struct — invites a silent factor of 86400, which is exactly the kind
  * of error that produces a plausible-looking wrong answer.
@@ -151,7 +151,7 @@ struct FVQual_EXPORT FirstOrderDecayTemplate
  * budgets rather than the coefficients, because a budget that closes is
  * evidence and a coefficient that looks right is not.
  *
- * **Nutrient uptake is split without a regulariser.** Algae draw nitrogen from
+ * **Nutrient uptake is split without a regularizer.** Algae draw nitrogen from
  * ammonium and nitrate in proportion to their availability. Written naively
  * that needs `NH4 / (NH4 + NO3)`, which is 0/0 in water containing neither.
  * Instead the split reuses the half-saturation denominator that limitation
@@ -182,7 +182,7 @@ struct FVQual_EXPORT DissolvedOxygenTemplate
      * \brief Benthic species to receive settled algae; empty to let it leave.
      *
      * SettlingSet reports what it loses either way, so an empty id is a
-     * modelling choice rather than a silent sink.
+     * modeling choice rather than a silent sink.
      */
     std::string algaeBenthicId;
 

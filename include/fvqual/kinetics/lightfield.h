@@ -31,7 +31,7 @@
  * form here, so the honest choice is also the cheap one.
  *
  * **Surface absorption.** A fraction of incident shortwave is absorbed in the
- * first few millimetres and never participates in photosynthesis. It is
+ * first few millimeters and never participates in photosynthesis. It is
  * subtracted before the march and reported separately by surfaceAbsorbed(),
  * because it is a real heat input that a surface heat budget will want rather
  * than energy this class is entitled to discard.
@@ -85,7 +85,7 @@ struct FVQual_EXPORT LightOptions
      *
      * CE-QUAL-W2's BETA. The default 0.45 is its usual value: roughly the
      * non-photosynthetically-active part of the spectrum, which is absorbed
-     * within centimetres.
+     * within centimeters.
      */
     double surfaceAbsorption = 0.45;
 

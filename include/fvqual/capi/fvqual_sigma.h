@@ -47,7 +47,7 @@ typedef struct FVQ_SigmaSpec
      *  surface, which is where a stratified reservoir keeps its gradient. */
     double blend;
 
-    /*! Minimum layer thickness (m, >= 0). The defence against vanishing
+    /*! Minimum layer thickness (m, >= 0). The defense against vanishing
      *  layers in shallow arms. */
     double minLayerThickness;
 

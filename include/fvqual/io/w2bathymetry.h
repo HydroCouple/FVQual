@@ -23,7 +23,7 @@
  * populates it — elevations come from the control file's location card, as
  * `EBOT`, the elevation of the bottom of the grid. So it is a required
  * parameter here rather than something guessed from the data. For DeGray,
- * `EBOT = 66.35 m` with 36 two-metre layers puts the top of the grid at
+ * `EBOT = 66.35 m` with 36 two-meter layers puts the top of the grid at
  * 138.35 m and the initial surface at 123.80 m, giving 7.29e8 m³ over
  * 5.09e7 m² — which matches the reservoir's published figures and is how the
  * interpretation was checked.
@@ -161,7 +161,7 @@ public:
     /*!
      * \brief Lays the active segments out as a chain of quadrilateral columns.
      *
-     * Segment centres follow the polyline implied by `DLX` and `PHI0`, and each
+     * Segment centers follow the polyline implied by `DLX` and `PHI0`, and each
      * column is as wide as its segment is at the initial water surface. The
      * width at other elevations is carried by the hypsography rather than the
      * plan geometry.
@@ -203,7 +203,7 @@ public:
      * plan area at elevation `z` is `DLX` times that span's overlap with
      * `[-W(z)/2, +W(z)/2]`. The overlaps sum to `W(z)` exactly, so the expanded
      * mesh holds **the same volume at every stage** as the one-column chain. The
-     * cross-section shape falls out of the curve: cells near the centreline stay
+     * cross-section shape falls out of the curve: cells near the centerline stay
      * wet to the bed, outer cells dry out partway up, which is what a real
      * section does and what a single averaged column cannot represent.
      *
@@ -261,7 +261,7 @@ public:
      * **The problem this solves.** Refining every segment equally refines the
      * wrong place. DeGray's narrowest active segment is 79 m across while its
      * widest is 5530 m, so four lanes everywhere makes 19.8 m cells in the
-     * tributary arms — against kilometre-long segments — and the barotropic
+     * tributary arms — against kilometer-long segments — and the barotropic
      * Courant limit collapses on cells that contribute nothing to the question
      * being asked. The overturning cell under investigation lives in the wide
      * water near the dam.

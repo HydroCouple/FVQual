@@ -276,7 +276,7 @@ TEST(Transfers, ConstituentMassIsConservedExactly)
 
 TEST(Transfers, IntakeElevationSetsWhatIsDelivered)
 {
-    // The reason an intake elevation is worth modelling. Same reservoir, same
+    // The reason an intake elevation is worth modeling. Same reservoir, same
     // rate, two different intakes — and the delivered water differs by most of
     // the reservoir's temperature range.
     Basin deep;

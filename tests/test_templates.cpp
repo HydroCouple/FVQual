@@ -13,7 +13,7 @@
  *
  * The most useful thing a template can get wrong is a unit conversion, because
  * a rate that is 86400 times too small produces output that looks entirely
- * plausible. Every gate below is therefore written in the units a modeller
+ * plausible. Every gate below is therefore written in the units a modeler
  * would use — days — and compares against a value computed independently in
  * those units.
  */
@@ -587,7 +587,7 @@ TEST(DissolvedOxygen, StreeterPhelpsMatchesTheAnalyticalDeficit)
 
 TEST(DissolvedOxygen, OxygenMinusCarbonaceousDemandIsConservedWithoutExchange)
 {
-    // With reaeration and sediment demand off, oxidising a unit of CBOD costs
+    // With reaeration and sediment demand off, oxidizing a unit of CBOD costs
     // exactly a unit of oxygen — so DO - CBOD is an identity of the
     // stoichiometry. It is also the statement that the ultimate deficit equals
     // the initial demand, which is the whole content of Streeter-Phelps.
@@ -721,7 +721,7 @@ TEST(DissolvedOxygen, GrowthIsTheProductOfItsLimitationFactors)
 {
     // Each limitation factor computed independently here and multiplied, against
     // what the configured network actually does over one short step. This is
-    // where a mis-parenthesised expression shows up — the budgets above would
+    // where a mis-parenthesized expression shows up — the budgets above would
     // still close if growth were limited by the wrong product.
     constexpr double muMax  = 2.0;
     constexpr double ksLight = 100.0;
@@ -765,7 +765,7 @@ TEST(DissolvedOxygen, GrowthIsTheProductOfItsLimitationFactors)
     suite.basin.setUniform(suite.algae, algae0);
 
     // One short step, so the concentrations the factors depend on have barely
-    // moved and the linearisation is accurate to well inside the tolerance.
+    // moved and the linearization is accurate to well inside the tolerance.
     constexpr double dt = 0.5;
 
     suite.basin.run(dt, 1);

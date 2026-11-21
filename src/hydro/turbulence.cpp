@@ -76,7 +76,7 @@ void TurbulenceClosure::initialize(int64_t columns, int layers)
     // One slice per thread. advanceColumn() is called from inside a parallel
     // loop over columns, and a single shared workspace is a race that corrupts
     // the solve silently rather than crashing -- every thread would assemble
-    // its tridiagonal on top of whatever its neighbours were half-way through.
+    // its tridiagonal on top of whatever its neighbors were half-way through.
     //
     // This is the second time this exact bug has been written in this codebase:
     // F7.1b found the same shared-workspace race in the momentum and scalar

@@ -10,7 +10,7 @@
  *
  * **Nothing is created or destroyed.** What leaves the water column arrives on
  * the sediment, exactly. This is an engine identity — unlike reaction
- * conservation, which belongs to the modeller — so it is gated to round-off, and
+ * conservation, which belongs to the modeler — so it is gated to round-off, and
  * the budget includes the benthic store rather than stopping at the waterline.
  *
  * **Nothing goes negative, at any time step.** This is the whole reason the
@@ -25,7 +25,7 @@
  * solution with the rate measured rather than asserted.
  *
  * That gate began as a centroid displacement and was wrong twice, both mine:
- * the blob travelled 40 m in a 20 m column, so it was measuring the remnant
+ * the blob traveled 40 m in a 20 m column, so it was measuring the remnant
  * left behind, and the refinement halved the layer thickness while holding the
  * step fixed, which leaves implicit upwind's O(w dt) error as a constant floor
  * and drives the convergence ratio to 1. The step is now refined with the grid
@@ -61,7 +61,7 @@ namespace Testing = FVQual::Testing;
 
 namespace {
 
-//! A settling velocity of one metre per day, in SI.
+//! A settling velocity of one meter per day, in SI.
 constexpr double kMetrePerDay = 1.0 / 86400.0;
 
 /*!
@@ -267,7 +267,7 @@ TEST(Settling, WaterPlusSedimentIsConservedExactly)
     {
         column.settling.apply(column.layered, column.state, dt);
 
-        // Checked every step. A drift that cancelled at the final time would
+        // Checked every step. A drift that canceled at the final time would
         // otherwise pass.
         const double total = column.waterMass(column.particulate) + column.bedMass();
 
@@ -408,7 +408,7 @@ TEST(Settling, TheProfileTranslatesAtTheSettlingVelocity)
     // would be wrong by a constant factor and a fixed-tolerance test could
     // still pass.
     //
-    // Two things this fixture got wrong at first, both mine. The blob travelled
+    // Two things this fixture got wrong at first, both mine. The blob traveled
     // 40 m in a 20 m column, so what was being measured was the centroid of the
     // numerical remnant after the material had left. And the refinement halved
     // `h` while holding `dt` fixed — implicit upwind carries an O(w dt) error

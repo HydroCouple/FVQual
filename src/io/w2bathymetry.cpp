@@ -366,7 +366,7 @@ bool W2Bathymetry::toMeshDefinition(HydroCouple::SDK::IO::MeshDefinition &defini
 
     bed.clear();
 
-    // Walk the chain of segment centres, then hang a quad off each interval.
+    // Walk the chain of segment centers, then hang a quad off each interval.
     // PHI0 is measured clockwise from north, so the along-channel unit vector is
     // (sin, cos) and the cross-channel one is its perpendicular.
     const size_t count = m_active.size();
@@ -814,7 +814,7 @@ namespace {
  * \brief Sorted union of two even partitions of [0, 1], deduplicated.
  *
  * These are the lane boundaries a shared segment boundary must carry so that a
- * coarse cell and its finer neighbour still meet edge to edge.
+ * coarse cell and its finer neighbor still meet edge to edge.
  */
 std::vector<double> partitionUnion(int left, int right)
 {
@@ -969,7 +969,7 @@ bool W2Bathymetry::toPlannedMeshDefinition(const LateralPlan &plan,
 
             // Walk the upstream side outward, then the downstream side back:
             // a simple polygon, with extra collinear vertices wherever the
-            // neighbour is finer.
+            // neighbor is finer.
             for (int64_t n : upstream)
                 definition.faceNodes.push_back(n);
 

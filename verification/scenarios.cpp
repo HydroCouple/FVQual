@@ -684,7 +684,7 @@ Scenario internalSeiche()
 
     const double endTime = 2.0 * period;
 
-    // Depth of the 15 C isotherm, interpolated between layer centres.
+    // Depth of the 15 C isotherm, interpolated between layer centers.
     const auto interfaceDepth = [&](int64_t column) {
         for (int k = 1; k < kLayers; ++k)
         {
@@ -844,7 +844,7 @@ Scenario lockExchange()
 
         scene.analytic.push_back(marker);
 
-        // Sub-cell front position from the modelled bed temperature.
+        // Sub-cell front position from the modeled bed temperature.
         double modelledFront = kDam;
         for (int64_t c = 0; c + 1 < layered.columnCount(); ++c)
         {

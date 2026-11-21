@@ -7,7 +7,7 @@
  * \version 0.1.0-alpha.1
  * \brief  Surface heat exchange from meteorology (F3.5).
  *
- * Until now the surface heat flux has been a number the modeller supplies. That
+ * Until now the surface heat flux has been a number the modeler supplies. That
  * is fine for a controlled experiment and useless for a reservoir, because the
  * flux is not an input — it depends on the water temperature it is trying to
  * set. Warm water radiates and evaporates harder, which is the negative
@@ -22,13 +22,13 @@
  *   the small fraction reflected.
  * - **Back radiation**, `epsilon sigma T_s^4`, the largest single loss and the
  *   one that makes the budget self-limiting.
- * - **Latent heat**, an evaporative loss driven by the vapour-pressure deficit
+ * - **Latent heat**, an evaporative loss driven by the vapor-pressure deficit
  *   between the water surface and the air, through a wind function.
  * - **Sensible heat**, conduction, tied to the latent term by the psychrometric
  *   constant.
  *
  * **Shortwave is not a surface flux, and that is the whole point.** Longwave,
- * latent and sensible exchange happen in the top millimetres and belong to the
+ * latent and sensible exchange happen in the top millimeters and belong to the
  * surface layer. Sunlight does not: it penetrates, and the depth over which it
  * is absorbed is what builds a thermocline. Handing all of it to the surface
  * layer produces a model that stratifies for the wrong reason and mixes down
@@ -113,7 +113,7 @@ struct FVQual_EXPORT Meteorology
      *
      * The defaults are exactly that W2 form converted to SI by dividing by
      * 133.322 Pa/mmHg. They replace an earlier guess that was roughly eight
-     * times too small: it gave a latent flux of 10 W/m² at a 1000 Pa vapour
+     * times too small: it gave a latent flux of 10 W/m² at a 1000 Pa vapor
      * deficit where the physical value is nearer 80, and since evaporation is
      * the dominant cooling term at high temperature, that pushed the
      * equilibrium temperature tens of degrees too high. Nothing in the unit
@@ -239,7 +239,7 @@ struct FVQual_EXPORT HeatFluxTerms
 };
 
 /*!
- * \brief Saturation vapour pressure over water (Pa) at \p celsius.
+ * \brief Saturation vapor pressure over water (Pa) at \p celsius.
  *
  * Magnus-Tetens. Accurate to a few tenths of a percent between -30 and 50 °C,
  * which is the range a reservoir model sees.

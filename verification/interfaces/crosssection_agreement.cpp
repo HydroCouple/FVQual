@@ -42,7 +42,7 @@ namespace {
 //
 // A symmetric trapezoid: invert at elevation 2, bottom width 6, sides rising
 // 8 m over 4 m horizontally on each side, so the width grows by exactly 1 m
-// per metre of stage and the top of bank is at elevation 10, 14 m wide.
+// per meter of stage and the top of bank is at elevation 10, 14 m wide.
 
 constexpr double kInvert      = 2.0;
 constexpr double kTopOfBank   = 10.0;
@@ -68,7 +68,7 @@ double exactPerimeter(double stage)
 {
     if (stage < kInvert) return 0.0;
     const double d = std::min(stage, kTopOfBank) - kInvert;
-    // Each bank retreats 0.5 m horizontally per metre of rise.
+    // Each bank retreats 0.5 m horizontally per meter of rise.
     return kBottomWidth + 2.0 * d * std::sqrt(1.0 + 0.25);
 }
 

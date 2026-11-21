@@ -7,7 +7,7 @@
 A figure is an assertion about a run, and an assertion that nobody checks is a
 caption. The annotated numbers in plot_degray.py are computed from the data
 rather than typed, so those cannot drift; what *can* drift are the words — a
-panel titled "the hypolimnion does not follow the weather" or a profile labelled
+panel titled "the hypolimnion does not follow the weather" or a profile labeled
 "fully stratified" is a claim in prose, and prose does not recompute itself.
 
 So each one is restated here as an inequality over the CSV. Run after plotting.
@@ -82,7 +82,7 @@ def main():
           strat.iloc[0] < 1.0 and strat.iloc[-1] < 1.0,
           f"{strat.iloc[0]:.2f} °C in March, {strat.iloc[-1]:.2f} °C in December")
 
-    # The equilibrium curve is labelled "near solar noon", so the sample instant
+    # The equilibrium curve is labeled "near solar noon", so the sample instant
     # had better be near noon and had better be the same each day.
     hour = (daily.jday % 1.0) * 24.0
 

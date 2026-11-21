@@ -31,7 +31,7 @@ using FVQual::Hydro::TurbulenceClosure;
 
 namespace {
 
-//! A uniform column: `layers` layers of `h` metres.
+//! A uniform column: `layers` layers of `h` meters.
 struct Column
 {
     int                 layers;
@@ -156,13 +156,13 @@ TEST(Turbulence, AConstantStressLayerReachesTheLogLayerEnergy)
 
     // Near the wall, where the log law is the theory. Mid-channel is *not*:
     // in a two-wall channel the energy legitimately falls below the wall value
-    // towards the centre, and an earlier version of this gate asserted the
+    // towards the center, and an earlier version of this gate asserted the
     // log-layer energy at mid-depth and failed at 0.28 of it — the bound was
     // wrong about where the result applies, not the closure.
     // Three interfaces, reaching 1.75 m into a 10 m channel. Interface 4 at
     // 2.25 m sits at 0.478 of the wall energy, which is not a failure of the
     // closure — it is a quarter of the way to mid-channel, past where a
-    // constant-stress layer is the right idealisation.
+    // constant-stress layer is the right idealization.
     for (int i = 1; i <= 3; ++i)
     {
         EXPECT_GT(closure.tke()[static_cast<size_t>(i)], 0.5 * expected)

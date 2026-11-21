@@ -57,7 +57,7 @@ namespace {
  * real-data gates at a local checkout. The compiled-in default is only a
  * convenience for the machine this was first written on.
  *
- * These gates skip when the file is absent, which is the right behaviour for a
+ * These gates skip when the file is absent, which is the right behavior for a
  * suite that must pass without a third-party dataset — and also a trap: a
  * hard-coded path that stops existing turns the gates with the most teeth into
  * three silent skips inside a run that still reports 100%. A skip is not a
@@ -281,7 +281,7 @@ TEST(W2Bathymetry, DeGrayReadsWithItsPublishedDimensions)
     EXPECT_NEAR(bathymetry.initialSurface()[1], 123.8, 1.0e-9);
     EXPECT_NEAR(bathymetry.layerHeight()[0], 2.0, 1.0e-9);
 
-    // 36 two-metre layers on a bed at 66.35 m.
+    // 36 two-meter layers on a bed at 66.35 m.
     EXPECT_NEAR(bathymetry.layerBottom(35), kDeGrayBottom, 1.0e-9);
     EXPECT_NEAR(bathymetry.layerBottom(0), kDeGrayBottom + 70.0, 1.0e-9);
 }
@@ -310,13 +310,13 @@ TEST(W2Bathymetry, DeGrayHoldsTheWaterItIsKnownToHold)
     EXPECT_GT(area, 3.0e7) << "area " << area;
     EXPECT_LT(area, 7.0e7) << "area " << area;
 
-    // Mean depth of a large impoundment: metres, not centimetres or hundreds.
+    // Mean depth of a large impoundment: meters, not centimeters or hundreds.
     EXPECT_GT(volume / area, 5.0);
     EXPECT_LT(volume / area, 40.0);
 
     // Storage falls away as the pool drops, and faster than linearly — the
     // hypsography a prism cannot represent.
-    const double drawn = bathymetry.volumeAt(113.8); // ten metres down
+    const double drawn = bathymetry.volumeAt(113.8); // ten meters down
 
     EXPECT_LT(drawn, volume);
     EXPECT_LT(drawn / volume, 0.6) << "ten metres of drawdown left " << drawn / volume;
@@ -501,7 +501,7 @@ TEST(W2VerticalProfile, TheInitialProfileConfirmsTheVerticalDatum)
     ASSERT_FALSE(temperature.empty());
 
     // This is the independent check on a datum the bathymetry never states.
-    // With EBOT = 66.35 m and 36 two-metre layers, the surface at 123.80 m
+    // With EBOT = 66.35 m and 36 two-meter layers, the surface at 123.80 m
     // leaves exactly 28 layers wetted — and the profile carries exactly 28
     // values. A datum wrong by even one layer would not line up.
     W2Bathymetry bathymetry;
@@ -662,7 +662,7 @@ TEST(W2Bathymetry, LateralExpansionGivesOuterLanesAHigherBed)
     EXPECT_GT(edge, centre) << "the outer lane is not shallower than the centre, so "
                                "the section has no shape";
 
-    // Symmetric about the centreline, because the width curve is.
+    // Symmetric about the centerline, because the width curve is.
     EXPECT_NEAR(bed[deepestSegment * kLanes],
                 bed[deepestSegment * kLanes + kLanes - 1], 1.0e-9);
 }
@@ -791,7 +791,7 @@ TEST(W2Bathymetry, AdaptiveLateralPlanRefinesTheWideWaterAndSparesTheArms)
     // And some must be left alone, or it is uniform refinement with extra steps.
     EXPECT_EQ(narrowest, 1);
 
-    // The constraint the plan exists to honour, checked segment by segment
+    // The constraint the plan exists to honor, checked segment by segment
     // against the widths rather than against the plan's own arithmetic.
     HydroCouple::SDK::IO::MeshDefinition definition;
     std::vector<double>                  bed;
@@ -820,7 +820,7 @@ TEST(W2Bathymetry, AdaptiveLateralPlanRefinesTheWideWaterAndSparesTheArms)
     EXPECT_LT(boundaryEdges, horizontal.edgeCount())
         << "every edge is a boundary, so no two cells are connected";
 
-    // Where the lane count changes, the coarse cell must carry its neighbour's
+    // Where the lane count changes, the coarse cell must carry its neighbor's
     // boundary nodes as extra collinear vertices — a face with more than four.
     // Without at least one, the transition path never ran and this whole test
     // reduces to a check on a uniform mesh under a different name.
@@ -922,7 +922,7 @@ TEST(W2TimeSeries, ARecordThatWrapsOntoFollowingLinesIsReadWhole)
 
 TEST(W2TimeSeries, AWrappedFileIsStillRefusedWithoutTheRecordWidth)
 {
-    // The old behaviour, kept: with no width given, a continuation line reads as
+    // The old behavior, kept: with no width given, a continuation line reads as
     // a data row whose first value is mistaken for a Julian day. Refusing is
     // right — this file was silently failing to load in the DeGray driver, and
     // a model that quietly runs without a calibrated input looks exactly like

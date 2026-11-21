@@ -171,7 +171,7 @@ TEST(Structures, OrificeFollowsItsRatingCurveAndItsGate)
 {
     Structure gate = orifice(/*centre=*/-8.0, /*area=*/2.5, /*C=*/0.62);
 
-    const double head     = 8.0; // surface at zero, centre at -8
+    const double head     = 8.0; // surface at zero, center at -8
     const double expected = 0.62 * 2.5 * std::sqrt(2.0 * kGravity * head);
 
     EXPECT_NEAR(StructureSet::rate(gate, 0.0), expected, 1.0e-9);

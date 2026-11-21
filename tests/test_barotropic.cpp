@@ -36,7 +36,7 @@ constexpr double kGravity = 9.80665;
 
 /*!
  * \brief Builds a channel mesh with a caller-supplied bed profile.
- * \param bedOfX Bed elevation as a function of cell-centre x.
+ * \param bedOfX Bed elevation as a function of cell-center x.
  */
 template <typename BedFunction>
 HorizontalMesh channel(int columns, double length, double width, BedFunction bedOfX)
@@ -575,7 +575,7 @@ TEST(Barotropic, RitterDamBreakConvergesToTheAnalyticSolution)
             }
         }
 
-        // Evaluate the analytic profile at the cell's own centre, not at the
+        // Evaluate the analytic profile at the cell's own center, not at the
         // nominal dam position — half a cell of offset is itself a percent
         // of the answer at these resolutions.
         const double xi = (mesh.faceCentroidX()[static_cast<size_t>(nearest)] - kDamX) /
@@ -723,7 +723,7 @@ TEST(Barotropic, FrictionDissipatesFlowAndStaysStable)
     // operator itself can never reverse or amplify a velocity — that is a
     // property of the formula, not something a system-level test can isolate,
     // because in a closed basin the walls legitimately reverse the flow all
-    // on their own. What is worth testing is the system behaviour: strong
+    // on their own. What is worth testing is the system behavior: strong
     // friction must dissipate the flow relative to a frictionless control,
     // and must stay stable while doing it.
     const HorizontalMesh mesh =

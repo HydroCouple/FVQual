@@ -194,7 +194,7 @@ TEST(ReactionFile, ACompleteFileParses)
 TEST(ReactionFile, NumericFieldsMayBeArithmetic)
 {
     // The one place the file undoes the per-day trap without guessing: a
-    // coefficient stays readable as the division a modeller actually means.
+    // coefficient stays readable as the division a modeler actually means.
     const std::string text = R"(
 [CONSTANTS]
    a    0.23/86400

@@ -291,7 +291,7 @@ bool DissolvedOxygenTemplate::configure(Hydro::InternalModeSolver &solver,
     // Oxygen demand exerted by carbonaceous material, in g O₂/m³/s.
     const std::string cbodOxidation = number(decay) + " * " + cbodId + arrhenius;
 
-    // Nitrogen oxidised, in g N/m³/s.
+    // Nitrogen oxidized, in g N/m³/s.
     const std::string nitrification =
         includeNutrients ? number(nitrify) + " * " + ammoniumId + arrhenius
                          : std::string();
@@ -419,7 +419,7 @@ bool DissolvedOxygenTemplate::configure(Hydro::InternalModeSolver &solver,
             // The uptake split. Both terms share the limitation denominator, so
             // they sum to exactly `nitrogenPerAlgae * growth` — which is what
             // makes the nitrogen budget close to round-off rather than to the
-            // size of a regulariser.
+            // size of a regularizer.
             const std::string fromAmmonium = number(nitrogenPerAlgae) + " * " +
                                              group(base) + " * " +
                                              group(ammoniumId + " / " +

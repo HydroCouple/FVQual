@@ -24,7 +24,7 @@
  *   are written only on success.
  * - fvq_error_message() gives static text for a code; fvq_last_error() gives
  *   the specific detail the engine produced, which is usually the useful one.
- * - All quantities are SI: metres, seconds, kilograms, degrees Celsius. There
+ * - All quantities are SI: meters, seconds, kilograms, degrees Celsius. There
  *   is no unit-system switch to bind, because the engine has none.
  * - Declarations are C89-compatible, and CI compiles this header with
  *   -std=c89 -pedantic-errors so that stays true.

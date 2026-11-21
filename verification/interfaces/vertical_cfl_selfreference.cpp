@@ -20,7 +20,7 @@
  * |---|---|---|
  * | dt range probed | 100 s down to 1e-4 s | cap 10 s down to 0.25 s |
  * | max abs w | 1.2e-16 falling to 7.7e-39 m/s | 1.89e-6 to 1.78e-6 m/s |
- * | behaviour | falls with dt | flat to within **1.06x** |
+ * | behavior | falls with dt | flat to within **1.06x** |
  *
  * At rest the volume change is *exactly* zero rather than noisy — the stage does
  * not move, so the two volumes are bitwise equal — and there is nothing to
@@ -35,7 +35,7 @@
  * 1. The first tilted experiment took a *single* step from rest. Nothing has
  *    accelerated after one step, so every value was round-off, and comparing
  *    them produced a 16000x "spread" that was noise over noise — and a verdict
- *    of "the self-reference is real" that was pure artefact. It now runs the
+ *    of "the self-reference is real" that was pure artifact. It now runs the
  *    seiche for 600 s, and refuses to interpret any value below 1e-6 m/s.
  * 2. The cap has to actually bind, or four runs take identical steps and the
  *    table compares one calculation with itself. The achieved internal step is
@@ -267,7 +267,7 @@ int main()
     // change, so there is nothing for a 1/dt to amplify and the first table
     // cannot settle the question on its own. Tilt the surface and there is a
     // real volume change: ΔV/dt must now converge to a genuine rate as dt
-    // shrinks. If instead it diverges, the diagnosed velocity is an artefact of
+    // shrinks. If instead it diverges, the diagnosed velocity is an artifact of
     // the step that produced it, and feeding it to the next step's Courant
     // limit is the self-reference the task suspected.
     std::printf("Vertical velocity with a tilted surface (real motion)\n\n");
@@ -306,7 +306,7 @@ int main()
 
     const double spread = smallest > 0.0 ? largest / smallest : 0.0;
 
-    // Refuse to read ratios of round-off. Anything below a micrometre per second
+    // Refuse to read ratios of round-off. Anything below a micrometer per second
     // is not motion in a reservoir, and comparing two such numbers says nothing
     // about the code that produced them.
     constexpr double kMeaningful = 1.0e-6;

@@ -40,12 +40,12 @@
  *    ALGAE    0.02
  * ```
  *
- * **Everything is SI.** Seconds, metres, grams. That is a deliberate refusal to
+ * **Everything is SI.** Seconds, meters, grams. That is a deliberate refusal to
  * be clever: a rate law is arbitrary text over constants whose meaning the
  * parser cannot know, so it could convert some numbers and not others, which
  * would be worse than converting none.
  *
- * **But numeric fields are expressions.** `0.23/86400` is how a modeller thinks
+ * **But numeric fields are expressions.** `0.23/86400` is how a modeler thinks
  * about a decay coefficient quoted per day, and it stays readable in the file
  * where `2.6620370370e-6` does not. Every numeric field here is evaluated by the
  * same parser the rate laws use, so the arithmetic is visible rather than

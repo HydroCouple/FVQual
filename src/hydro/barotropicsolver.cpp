@@ -450,7 +450,7 @@ void BarotropicSolver::ghostState(const BoundaryCondition &condition, double hL,
     const double celerity = std::sqrt(gravity * std::max(hL, 0.0));
 
     // The outgoing Riemann invariant, carried to the boundary from inside along
-    // the characteristic travelling at u + c. This is the piece the exterior
+    // the characteristic traveling at u + c. This is the piece the exterior
     // does not get to choose.
     const double invariant = unL + 2.0 * celerity;
 
@@ -1080,11 +1080,11 @@ void BarotropicSolver::accumulateFluxes()
         // sum around a closed cell is identically zero.
         //
         // Stored per edge rather than scattered into the two adjacent cells.
-        // The scatter is what made this loop unparallelisable: two edges
+        // The scatter is what made this loop unparallelizable: two edges
         // sharing a cell race on the same accumulator, and that is a property
         // of every unstructured finite-volume sweep, not of this one. Storing
         // here and gathering below costs three doubles per edge and makes both
-        // passes race-free by construction — no colouring, no atomics, and the
+        // passes race-free by construction — no coloring, no atomics, and the
         // shape a GPU wants (F7.1a).
         m_edgeFluxMass[ei] = fMass;
         m_edgeFluxX[ei]    = fMomX;

@@ -301,7 +301,7 @@ TEST(MacDonald, TheExactProfileIsAFixedPointOfTheSolver)
     // The bound is set from what the scheme actually achieves — 0.57 mm on a
     // 2 m depth at this resolution — not from what feels safe. A percent-level
     // tolerance here would be satisfied by a solver that had lost the balance
-    // entirely and was merely in the right neighbourhood.
+    // entirely and was merely in the right neighborhood.
     EXPECT_LT(settled, 1.0e-3)
         << "the exact profile drifted to a mean depth error of " << settled
         << " m (started at " << initial << " m)";
@@ -354,7 +354,7 @@ TEST(MacDonald, RefinementConvergesTowardTheExactProfile)
 {
     // A single tolerance cannot distinguish a first-order scheme from a bug.
     // Refinement can: the error must fall, and fall at a rate consistent with
-    // the discretisation rather than stalling at some fixed floor.
+    // the discretization rather than stalling at some fixed floor.
     std::vector<double> errors;
 
     for (int columns : {50, 100, 200})

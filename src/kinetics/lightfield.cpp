@@ -99,7 +99,7 @@ void LightField::update(const Mesh::LayeredMesh &mesh, const State::StateStore &
             const double  h    = thickness[static_cast<size_t>(cell)];
 
             // Self-shading. Every species contributes whatever it was given a
-            // coefficient for, so which constituents shade is a modelling
+            // coefficient for, so which constituents shade is a modeling
             // statement rather than a hard-coded list.
             double gamma = options.backgroundAttenuation;
 

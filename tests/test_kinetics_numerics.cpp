@@ -86,10 +86,10 @@ TEST(KineticsExpression, UnaryMinusBindsTighterThanExponentiation)
     // obviously right. This parser reads "-3 ^ 2" as (-3)^2 = 9, as Excel
     // does. Mathematical notation and Python read it as -(3^2) = -9.
     //
-    // The behaviour is inherited from the shared openswmm lineage, so changing
+    // The behavior is inherited from the shared openswmm lineage, so changing
     // it here would silently give a different answer to a reaction expression
     // that produces the other one there. It is recorded rather than altered,
-    // and anyone writing a rate law is better served by parenthesising.
+    // and anyone writing a rate law is better served by parenthesizing.
     const Kinetics::Expression expression = compile("-3 ^ 2");
 
     EXPECT_NEAR(Kinetics::evaluate(expression, nullptr, 0), 9.0, 1.0e-12)
@@ -144,7 +144,7 @@ TEST(KineticsExpression, VariablesBindByNameAndEvaluateFromTheArray)
 
     EXPECT_NEAR(Kinetics::evaluate(expression, values, 3), expected, 1.0e-12);
 
-    // The bound fast path must agree with the checked one, or the optimisation
+    // The bound fast path must agree with the checked one, or the optimization
     // is silently computing something else.
     EXPECT_NEAR(Kinetics::evaluate_fast(expression, values), expected, 1.0e-12);
 

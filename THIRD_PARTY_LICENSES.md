@@ -45,7 +45,7 @@ documentation. **MIT License**, Copyright (c) 2021–2023 jothepro.
 - Upstream: <https://github.com/jothepro/doxygen-awesome-css>
 
 The files are copied verbatim, with only the vendored `header.html` retargeted
-from the theme's own branding to this project's. The full licence text is
+from the theme's own branding to this project's. The full license text is
 retained in the header of `docs/custom/css/doxygen-awesome.css`. The same theme
 and Doxygen release are used by HydroCoupleSDK and the HydroCouple interface
 definitions, so the three documentation sets render identically.
@@ -60,7 +60,7 @@ Apache-2.0.
 
 They are reproduced here under MIT **by the copyright holder**, who holds the
 rights to both projects. This is a relicensing of the author's own work, not a
-redistribution under Apache-2.0, so FVQual remains a single-licence project and
+redistribution under Apache-2.0, so FVQual remains a single-license project and
 carries no NOTICE obligation for them.
 
 The two copies are independent from here on but are expected to stay close

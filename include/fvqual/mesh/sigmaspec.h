@@ -30,7 +30,7 @@ namespace FVQual::Mesh {
 /*!
  * \brief Vertical layering configuration.
  *
- * All lengths are metres (SI internally — see CONTRIBUTING).
+ * All lengths are meters (SI internally — see CONTRIBUTING).
  */
 struct FVQual_EXPORT SigmaSpec
 {

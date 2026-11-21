@@ -106,7 +106,7 @@ inline HydroCouple::SDK::IO::MeshDefinition quadStrip(int columns)
  *        \p width in y — the domain for the 1-D analytical benchmarks
  *        (seiche, wind setup, dam break).
  *
- * Cell centres sit at (i + 1/2) * length / columns.
+ * Cell centers sit at (i + 1/2) * length / columns.
  */
 inline HydroCouple::SDK::IO::MeshDefinition channelStrip(int columns, double length,
                                                          double width)
@@ -150,7 +150,7 @@ inline HydroCouple::SDK::IO::MeshDefinition channelStrip(int columns, double len
  * the suspicion hanging over DeGray's interior warm bias, and exactly what a
  * laterally-averaged schematisation cannot be used to test.
  *
- * Cell centres sit at ((i + 1/2) dx, (j + 1/2) dy).
+ * Cell centers sit at ((i + 1/2) dx, (j + 1/2) dy).
  */
 inline HydroCouple::SDK::IO::MeshDefinition basinGrid(int nx, int ny, double length,
                                                       double width)

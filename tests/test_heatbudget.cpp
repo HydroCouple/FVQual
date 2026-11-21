@@ -6,12 +6,12 @@
  * \brief Verification of the meteorological surface heat budget (F3.5).
  *
  * A prescribed heat flux cannot be wrong in an interesting way — it is whatever
- * the modeller typed. A computed one can, and the ways it goes wrong are
+ * the modeler typed. A computed one can, and the ways it goes wrong are
  * characteristic: a sign slip that heats at night, a wind function off by a
  * factor that makes a lake evaporate away, or sunlight dumped into the surface
  * layer so the model stratifies for the wrong reason.
  *
- * So the gates here are about behaviour rather than arithmetic. The budget must
+ * So the gates here are about behavior rather than arithmetic. The budget must
  * be **self-limiting** — warm water must lose heat faster, which is what gives a
  * lake an equilibrium temperature — and a column left under steady weather must
  * actually find that temperature. Energy must be conserved: what the flux says
@@ -165,7 +165,7 @@ TEST(HeatBudget, WindDrivenBySunAndAirAlsoDrivesTheWater)
     // mixing is Richardson-damped, `Ri = N²/max(shear, 1e-12)`, so with nothing
     // driving the surface there is no shear, Ri is enormous, and the eddy
     // diffusivity collapses to its 1e-7 background — the mixing scheme runs every
-    // step and does nothing. A parameterisation switched off by an unset input in
+    // step and does nothing. A parameterization switched off by an unset input in
     // another module is invisible to every budget check.
     Basin still;
     still.build(/*layers=*/6, /*totalDepth=*/12.0, 15.0);
@@ -318,7 +318,7 @@ TEST(HeatBudget, EquilibriumTemperatureIsWhereTheFluxVanishes)
 
 TEST(HeatBudgetSolver, AShallowColumnDriftsToTheEquilibriumTemperature)
 {
-    // The behavioural gate. A shallow, unstratified column under unchanging
+    // The behavioral gate. A shallow, unstratified column under unchanging
     // weather must approach the equilibrium temperature the budget implies and
     // then stay there — that is what "equilibrium" has to mean for the number
     // to be worth reporting.
@@ -420,7 +420,7 @@ TEST(HeatBudgetSolver, EnergyEnteringTheWaterMatchesTheFlux)
 TEST(HeatBudgetSolver, SunlightHeatsTheColumnAndNotJustTheSkin)
 {
     // The reason the penetrating shortwave is distributed. With absorption
-    // spread over a few metres the interior warms too; if all the sunlight were
+    // spread over a few meters the interior warms too; if all the sunlight were
     // handed to the surface layer, everything below it would be untouched, and
     // the model would stratify because of a numerical choice rather than an
     // optical one.
@@ -458,7 +458,7 @@ TEST(HeatBudgetSolver, SunlightHeatsTheColumnAndNotJustTheSkin)
 
 TEST(HeatBudgetSolver, TheBudgetIsInertUntilItIsEnabled)
 {
-    // An existing model must not change behaviour because this code landed.
+    // An existing model must not change behavior because this code landed.
     // Without enableMeteorology(), the prescribed flux is still what acts.
     Meteorology weather = night();
     weather.shortwave   = 800.0;
@@ -587,7 +587,7 @@ TEST(SolarRadiation, SummerDeliversMoreThanWinterAndCloudReducesIt)
     EXPECT_GT(summer, 2.0 * winter)
         << "summer " << summer << " J/m², winter " << winter;
 
-    // Magnitudes a solar engineer would recognise: a clear midsummer day at
+    // Magnitudes a solar engineer would recognize: a clear midsummer day at
     // this latitude delivers of order 25-35 MJ/m².
     EXPECT_GT(summer, 20.0e6);
     EXPECT_LT(summer, 40.0e6);

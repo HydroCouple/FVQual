@@ -86,7 +86,7 @@ GENERATE_TESTLIST      = YES
 GENERATE_BUGLIST       = YES
 GENERATE_DEPRECATEDLIST = YES
 
-# \threadsafety is used throughout the headers; \license keeps the licence
+# \threadsafety is used throughout the headers; \license keeps the license
 # statement identical everywhere rather than retyped per file.
 ALIASES                = "threadsafety=\par Thread Safety^^" \
                          "license=\par License^^MIT — see LICENSE in the repository root.^^"

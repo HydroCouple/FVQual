@@ -18,7 +18,7 @@
  * | k-epsilon + wind | **3.42 °C** | −1.23 | +2.95 | +3.39 |
  *
  * Wind stress is what fixes the epilimnion: the 5-10 m band goes from −3.91 to
- * −1.11, and without it the modelled April surface layer is 3 m against a
+ * −1.11, and without it the modeled April surface layer is 3 m against a
  * measured 14 m. What wind then costs is the interior, which both schemes
  * over-mix by 3 to 4 °C.
  *

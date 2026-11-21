@@ -14,7 +14,7 @@
  * real defect has nowhere to hide, and there is no loose threshold absorbing it.
  *
  * The one quantity that *is* an approximation is the relationship between the
- * layer mean and the point value at the cell centre; that converges at second
+ * layer mean and the point value at the cell center; that converges at second
  * order, and the refinement gate measures the rate rather than asserting it.
  */
 
@@ -366,7 +366,7 @@ TEST(LightField, ANegativeCoefficientIsRefused)
 TEST(LightField, LayerMeansConvergeToThePointValueAtSecondOrder)
 {
     // The one genuinely approximate relationship here: a cell holds the mean
-    // over its layer, and that approaches the value at the cell centre as the
+    // over its layer, and that approaches the value at the cell center as the
     // layers thin. Second order, and measured rather than asserted — if it came
     // out first order, the mean would be being computed by something cruder
     // than the closed form.
@@ -390,7 +390,7 @@ TEST(LightField, LayerMeansConvergeToThePointValueAtSecondOrder)
 
         column.light.update(column.layered, column.state, options);
 
-        // The layer whose centre sits at the probe depth.
+        // The layer whose center sits at the probe depth.
         const double h     = totalDepth / static_cast<double>(layers);
         const int    index = static_cast<int>(probe / h) - 1;
         const double centre = (static_cast<double>(index) + 0.5) * h;

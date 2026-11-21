@@ -22,7 +22,7 @@
  *
  * **Direction.** Weirs, orifices, and pipes are outlet works and release only.
  * If the tailwater rises above the driving head they close rather than
- * reversing — a real submerged gate would admit flow backwards, but modelling
+ * reversing — a real submerged gate would admit flow backwards, but modeling
  * that means deciding what the returning water is made of, and a structure
  * that silently invents composition is worse than one that admits it stops.
  * Pumps may run in either direction, because a pumped inflow has a named
@@ -57,7 +57,7 @@ enum class StructureType
 
     /*!
      * \brief Orifice or gate: `Q = C A g_open sqrt(2 g dH)`, where the driving
-     *        head is measured to the orifice centre when the outlet discharges
+     *        head is measured to the orifice center when the outlet discharges
      *        freely and to the tailwater when it is submerged.
      */
     Orifice,
@@ -86,7 +86,7 @@ struct FVQual_EXPORT Structure
     int64_t       column = 0;
 
     /*!
-     * \brief Weir crest, orifice centre, or pipe invert elevation (m).
+     * \brief Weir crest, orifice center, or pipe invert elevation (m).
      */
     double crestElevation = 0.0;
 

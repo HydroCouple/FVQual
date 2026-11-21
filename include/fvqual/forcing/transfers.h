@@ -12,7 +12,7 @@
  * water to the surface, a withdrawal tower discharging into another branch.
  *
  * **What makes a transfer more than two independent sources.** An inflow
- * registered by hand carries a composition the modeller states. A transfer
+ * registered by hand carries a composition the modeler states. A transfer
  * cannot: the water arriving at the receiving column *is* the water that left
  * the donating one, so its temperature and every constituent it carries are
  * determined by where in the donor's column it was drawn from. Pump 6 °C water

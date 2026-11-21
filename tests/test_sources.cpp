@@ -15,7 +15,7 @@
  *
  * *Placement* — a plunging inflow must find its own density level, and a
  * withdrawal envelope must narrow as stratification strengthens. These are the
- * behaviours reservoir operations actually depend on, and getting the budget
+ * behaviors reservoir operations actually depend on, and getting the budget
  * right while placing the water in the wrong layer would be a model that
  * balances and lies.
  */
@@ -172,7 +172,7 @@ struct StaticColumn
      * \brief A column stratified in three bands: steep, gentle, steep.
      *
      * Gives a zone that develops freely (neither limit reaches a boundary) but
-     * asymmetrically about a port placed off-centre in the gentle band, which
+     * asymmetrically about a port placed off-center in the gentle band, which
      * is what eq. 4 is about.
      */
     void buildBanded(int layers, double depth, double gentleTop, double gentleBottom)
@@ -318,7 +318,7 @@ TEST(Sources, DistributionSumsToTheColumnTotal)
 
 TEST(Sources, PlungingInflowFindsItsNeutralLevel)
 {
-    // The behaviour that makes a tributary a three-dimensional problem: an
+    // The behavior that makes a tributary a three-dimensional problem: an
     // inflow colder than the epilimnion sinks past it rather than mixing in.
     StaticColumn column;
     column.build(20, 20.0, 5.0, 25.0, 5.0);
@@ -404,7 +404,7 @@ TEST(Sources, AThermoclineExcludesTheEpilimnionEntirely)
 {
     // A step profile: well-mixed 28 degC above 10 m, well-mixed 4 degC below.
     // A low-level port in the hypolimnion cannot reach across the thermocline,
-    // and inside the well-mixed layer there is no buoyancy to favour one depth
+    // and inside the well-mixed layer there is no buoyancy to favor one depth
     // over another — so the draw is uniform there and exactly zero above.
     //
     // The uniformity is a property of the density-anomaly velocity profile the
@@ -467,9 +467,9 @@ TEST(Sources, AnAsymmetricZoneShiftsTheVelocityMaximumOffThePort)
     // stratification lets the zone grow further on one side than the other, the
     // maximum moves. The check computes eq. 4 from the model's *own* zone
     // limits and asks where the draw actually peaks, so it tests the relation
-    // rather than a memorised elevation.
+    // rather than a memorized elevation.
     // The gentle band is bounded above and below by steeply stratified water,
-    // so the zone still develops freely; placing the port well off-centre
+    // so the zone still develops freely; placing the port well off-center
     // *within* that band is what makes it lopsided.
     constexpr double kPort      = -6.0;
     constexpr double kDischarge = 8.0;
@@ -564,7 +564,7 @@ TEST(Sources, AnAsymmetricZoneShiftsTheVelocityMaximumOffThePort)
         << centreOf(nearest) << " m)";
 
     // The discriminating part: the maximum is genuinely off the port. Without
-    // eq. 4 the profile would be centred on the port layer and this would fail.
+    // eq. 4 the profile would be centered on the port layer and this would fail.
     int portLayer = 0;
     best = 1.0e30;
 
@@ -687,7 +687,7 @@ TEST(Sources, TheZoneLimitSatisfiesThePublishedFroudeCondition)
     }
 
     // Where the model actually stopped drawing. The limit layer itself carries
-    // *zero* velocity by construction — the parabola is normalised by the
+    // *zero* velocity by construction — the parabola is normalized by the
     // density contrast at the limit, so it vanishes exactly there — and the
     // reference implementation has the same property. The first layer with a
     // nonzero draw is therefore one step inside the limit.
@@ -731,7 +731,7 @@ TEST(Sources, UnderLinearStratificationTheDrawPeaksAtThePort)
 {
     // The counterpart. With a continuous density gradient the layers are no
     // longer interchangeable, and the parabolic profile does peak at the port
-    // and fall away from it — the behaviour the step-profile case cannot show.
+    // and fall away from it — the behavior the step-profile case cannot show.
     StaticColumn column;
     column.buildLinear(20, 20.0, /*warm=*/28.0, /*cold=*/4.0);
 

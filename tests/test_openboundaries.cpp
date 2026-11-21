@@ -436,7 +436,7 @@ TEST(OpenBoundaries, ASupercriticalOutflowIgnoresTheStageImposedOnIt)
     stage.id   = "outlet";
     stage.type = BarotropicSolver::BoundaryType::Stage;
 
-    // A stage far above the interior. If it were honoured, it would drive a
+    // A stage far above the interior. If it were honored, it would drive a
     // surge back up the channel.
     stage.stage = 5.0;
 
