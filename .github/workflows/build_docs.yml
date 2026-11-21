@@ -48,10 +48,12 @@ jobs:
           path: HydroCouple
 
       - name: Checkout HydroCoupleSDK
+        # SDK 2.0 (the CMake project FVQual builds against) is on removing_qt until it
+        # merges into dev; dev still holds the 1.x tree, so the configure step failed there.
         uses: actions/checkout@v4
         with:
           repository: HydroCouple/HydroCoupleSDK
-          ref: dev
+          ref: removing_qt
           path: HydroCoupleSDK
 
       - name: Install Graphviz
@@ -79,6 +81,7 @@ jobs:
           -DFVQual_BUILD_VERIFICATION=OFF
           -DFVQual_USE_NETCDF=OFF
           -DFVQual_USE_OPENMP=OFF
+          -DBUILD_TOOLS=ON
           -DFVQual_SDK_SOURCE_DIR=${{ github.workspace }}/HydroCoupleSDK
           -DHYDROCOUPLE_INCLUDE_DIR=${{ github.workspace }}/HydroCouple/include
 

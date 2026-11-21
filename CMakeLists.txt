@@ -142,11 +142,11 @@ endif()
 if(FVQual_BUILD_VERIFICATION)
     add_subdirectory(verification)
 add_subdirectory(benchmarks)
+endif()
 
 if(FVQual_BUILD_DOCS)
     find_package(Doxygen REQUIRED)
     add_subdirectory(docs)
-endif()
 endif()
 
 # ── Install / export ──────────────────────────────────────────────────────
