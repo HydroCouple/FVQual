@@ -26,6 +26,8 @@ HIDE_UNDOC_CLASSES     = NO
 
 BRIEF_MEMBER_DESC      = YES
 REPEAT_BRIEF           = YES
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
 INHERIT_DOCS           = YES
 SORT_MEMBER_DOCS       = YES
 
@@ -51,12 +53,30 @@ HTML_OUTPUT            = html
 GENERATE_TREEVIEW      = YES
 DISABLE_INDEX          = NO
 HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/custom/html/header.html
-HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/custom/css/doxygen-awesome.css
+HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/custom/css/doxygen-awesome.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hc-fonts.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hc-tokens.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hc-diagrams.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hydrocouple-doxygen.css
 HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/custom/js/doxygen-awesome-darkmode-toggle.js \
                          @CMAKE_CURRENT_SOURCE_DIR@/custom/js/doxygen-awesome-fragment-copy-button.js \
                          @CMAKE_CURRENT_SOURCE_DIR@/custom/js/doxygen-awesome-interactive-toc.js \
                          @CMAKE_CURRENT_SOURCE_DIR@/custom/js/doxygen-awesome-paragraph-link.js \
-                         @CMAKE_CURRENT_SOURCE_DIR@/custom/js/doxygen-awesome-tabs.js
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/js/doxygen-awesome-tabs.js \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hc-doxygen.js \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hc-diagrams.js \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/hydrocouple_logo.png \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/inter-greek.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/inter-latin-ext.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/inter-latin.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/jetbrains-mono-greek.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/jetbrains-mono-latin-ext.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/jetbrains-mono-latin.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/sora-latin-ext.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/sora-latin.woff2 \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/inter-OFL.txt \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/jetbrainsmono-OFL.txt \
+                         @CMAKE_CURRENT_SOURCE_DIR@/custom/hydrocouple/sora-OFL.txt
 HTML_COLORSTYLE_HUE    = 220
 HTML_COLORSTYLE_SAT    = 174
 HTML_COLORSTYLE_GAMMA  = 84
@@ -68,8 +88,8 @@ GENERATE_DEPRECATEDLIST = YES
 
 # \threadsafety is used throughout the headers; \license keeps the licence
 # statement identical everywhere rather than retyped per file.
-ALIASES                = "threadsafety=\par Thread Safety\n" \
-                         "license=\par License\nMIT — see LICENSE in the repository root.\n"
+ALIASES                = "threadsafety=\par Thread Safety^^" \
+                         "license=\par License^^MIT — see LICENSE in the repository root.^^"
 
 # Call and caller graphs are worth the build time here: the mode-splitting
 # driver is the one place where reading the call order is how the design is

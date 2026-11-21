@@ -45,11 +45,8 @@ extlinks = {
 }
 
 html_theme = "pydata_sphinx_theme"
-html_static_path = ["_static"]
-html_css_files = ['hydrocouple-palette.css']
 
 html_theme_options = {
-    "github_url": "https://github.com/hydrocouple/FVQual",
     "icon_links": [
         {
             "name": "C++ API (Doxygen)",
@@ -66,3 +63,29 @@ html_theme_options = {
 }
 
 myst_enable_extensions = ["colon_fence", "deflist"]
+
+
+# -- HydroCouple documentation theme ---------------------------------------
+import os  # noqa: E402
+import sys  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_hydrocouple"))
+import hydrocouple_theme  # noqa: E402
+
+hydrocouple_theme.configure(
+    globals(),
+    manual_id="FVQual.python",
+    project_label="FVQual · Python",
+    repository="https://github.com/HydroCouple/FVQual",
+    hero={
+        "kicker": "FVQual · Python",
+        "title": "Drive FVQual from a script",
+        "lede": "The planned Python interface opens, steps and inspects FVQual's three-dimensional "
+                "hydrodynamic and water-quality simulations through its C API; these pages hold "
+                "its design.",
+        "actions": [
+            {"label": "Read the design", "url": "design", "style": "solid"},
+            {"label": "C++ reference", "url": "https://www.hydrocouple.org/FVQual/", "style": "ghost"},
+        ],
+    },
+)
