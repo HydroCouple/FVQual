@@ -73,6 +73,8 @@ jobs:
       - name: Configure (docs only)
         # Documentation is generated from the headers, so the heavy optional
         # dependencies are switched off: nothing here needs to link.
+        # BUILD_TESTS is the SDK's own switch (it is built in-tree and would
+        # otherwise require GTest, which this runner does not have).
         run: >
           cmake -S . -B build
           -DFVQual_BUILD_DOCS=ON
@@ -82,6 +84,7 @@ jobs:
           -DFVQual_USE_NETCDF=OFF
           -DFVQual_USE_OPENMP=OFF
           -DBUILD_TOOLS=ON
+          -DBUILD_TESTS=OFF
           -DFVQual_SDK_SOURCE_DIR=${{ github.workspace }}/HydroCoupleSDK
           -DHYDROCOUPLE_INCLUDE_DIR=${{ github.workspace }}/HydroCouple/include
 
