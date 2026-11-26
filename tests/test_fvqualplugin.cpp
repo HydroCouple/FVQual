@@ -11,7 +11,13 @@
 #include "hydrocouplesdk/componentabi.h"
 #include "hydrocouplesdk/differentiation/differentials.h"
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 
 #include <filesystem>
 #include <memory>
@@ -21,19 +27,54 @@ namespace {
 
 std::filesystem::path pluginPath()
 {
-    std::filesystem::path path =
-        std::filesystem::path(FVQUAL_COMPONENTS_DIR) /
-        "libfvqual-component.so";
-    if (!std::filesystem::exists(path))
-        path.replace_extension(".dylib");
-    return path;
+    return std::filesystem::path(FVQUAL_PLUGIN_PATH);
 }
+
+// What a host does with a component library: open it, look up a symbol,
+// close it. dlopen/dlsym elsewhere, LoadLibrary/GetProcAddress on Windows.
+#ifdef _WIN32
+void *openLibrary(const std::filesystem::path &path)
+{
+    return LoadLibraryW(path.c_str());
+}
+void *librarySymbol(void *library, const char *name)
+{
+    return reinterpret_cast<void *>(
+        GetProcAddress(static_cast<HMODULE>(library), name));
+}
+void closeLibrary(void *library)
+{
+    FreeLibrary(static_cast<HMODULE>(library));
+}
+std::string libraryError()
+{
+    return "Windows error " + std::to_string(GetLastError());
+}
+#else
+void *openLibrary(const std::filesystem::path &path)
+{
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+}
+void *librarySymbol(void *library, const char *name)
+{
+    return dlsym(library, name);
+}
+void closeLibrary(void *library)
+{
+    dlclose(library);
+}
+std::string libraryError()
+{
+    const char *error = dlerror();
+    return error ? error : "";
+}
+#endif
 
 } // namespace
 
 TEST(FVQualPluginTest, ConditionalDifferentiationCrossesThePluginBoundary) {
-    void *handle=dlopen(pluginPath().c_str(),RTLD_NOW|RTLD_LOCAL);ASSERT_NE(handle,nullptr)<<dlerror();
-    const auto info=reinterpret_cast<HydroCoupleComponentInfoFn>(dlsym(handle,HYDROCOUPLE_COMPONENT_INFO_SYMBOL));ASSERT_NE(info,nullptr);
+    void *handle=openLibrary(pluginPath());ASSERT_NE(handle,nullptr)<<libraryError();
+    const auto info=reinterpret_cast<HydroCoupleComponentInfoFn>(librarySymbol(handle, HYDROCOUPLE_COMPONENT_INFO_SYMBOL));ASSERT_NE(info,nullptr);
     auto *modelInfo=dynamic_cast<HydroCouple::IModelComponentInfo *>(info());ASSERT_NE(modelInfo,nullptr);
     {
         auto component=modelInfo->createComponentInstance();std::string message;
@@ -54,22 +95,22 @@ TEST(FVQualPluginTest, ConditionalDifferentiationCrossesThePluginBoundary) {
         ASSERT_TRUE(d->jvp({&seed,1},{&output,1},&message))<<message;for(double value:result)EXPECT_NEAR(value,1,2e-14);
         component->finish();
     }
-    dlclose(handle);
+    closeLibrary(handle);
 }
 
 TEST(FVQualPluginTest, LoadsThroughTheStampedConventionAndRunsItsDefaults)
 {
-    void *handle = dlopen(pluginPath().c_str(), RTLD_NOW | RTLD_LOCAL);
-    ASSERT_NE(handle, nullptr) << dlerror();
+    void *handle = openLibrary(pluginPath());
+    ASSERT_NE(handle, nullptr) << libraryError();
 
     auto abi = reinterpret_cast<HydroCoupleComponentAbiFn>(
-        dlsym(handle, HYDROCOUPLE_COMPONENT_ABI_SYMBOL));
-    ASSERT_NE(abi, nullptr) << dlerror();
+        librarySymbol(handle, HYDROCOUPLE_COMPONENT_ABI_SYMBOL));
+    ASSERT_NE(abi, nullptr) << libraryError();
     EXPECT_STREQ(abi(), HYDROCOUPLE_COMPONENT_ABI_STAMP);
 
     auto info = reinterpret_cast<HydroCoupleComponentInfoFn>(
-        dlsym(handle, HYDROCOUPLE_COMPONENT_INFO_SYMBOL));
-    ASSERT_NE(info, nullptr) << dlerror();
+        librarySymbol(handle, HYDROCOUPLE_COMPONENT_INFO_SYMBOL));
+    ASSERT_NE(info, nullptr) << libraryError();
     auto *modelInfo =
         dynamic_cast<HydroCouple::IModelComponentInfo *>(info());
     ASSERT_NE(modelInfo, nullptr)
@@ -105,5 +146,5 @@ TEST(FVQualPluginTest, LoadsThroughTheStampedConventionAndRunsItsDefaults)
         component->finish();
         ASSERT_EQ(component->status(), Status::Finished);
     } // the instance dies before its library does
-    dlclose(handle);
+    closeLibrary(handle);
 }

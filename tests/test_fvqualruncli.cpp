@@ -27,6 +27,17 @@ std::filesystem::path outputDirectory()
     return std::filesystem::path(FVQual_TEST_OUTPUT_DIR) / "standalone";
 }
 
+// Runs a command line through the shell. cmd.exe drops the first and last
+// quote of a command that holds more than two, so on Windows the whole line
+// goes in one more pair.
+int run(std::string command)
+{
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    return std::system(command.c_str());
+}
+
 // The composition reads a mesh package, which needs NetCDF.
 #ifdef FVQual_HAVE_NETCDF
 TEST(FVQualRunCli, RecordedMixedMeshCompositionResolvesInputsAndRecordsElapsedTime)
@@ -49,7 +60,7 @@ TEST(FVQualRunCli, RecordedMixedMeshCompositionResolvesInputsAndRecordsElapsedTi
     std::filesystem::copy_file(example / "composition.json", directory / "composition.json");
     const std::string command = std::string("\"") + FVQUAL_CLI_PATH + "\" run \"" +
         (directory / "composition.json").string() + "\"";
-    ASSERT_EQ(std::system(command.c_str()), 0) << command;
+    ASSERT_EQ(run(command), 0) << command;
     IO::RunManifest manifest;
     ASSERT_TRUE(IO::RunManifest::read(directory / "output/run.json", manifest, message)) << message;
     EXPECT_EQ(manifest.status, IO::RunStatus::Completed);
@@ -73,7 +84,7 @@ TEST(FVQualRunCli, RelativeReactionDeckRunsAndReopensWithConservedConversion) {
     const auto example=std::filesystem::path(FVQUAL_FIXTURES_DIR).parent_path().parent_path()/"examples/reactive_transport";
     for(const char *file:{"composition.json","reaction.rxn"})std::filesystem::copy_file(example/file,dir/file);
     const std::string command=std::string("\"")+FVQUAL_CLI_PATH+"\" run \""+(dir/"composition.json").string()+"\"";
-    ASSERT_EQ(std::system(command.c_str()),0)<<command;std::string message;IO::RunManifest manifest;
+    ASSERT_EQ(run(command),0)<<command;std::string message;IO::RunManifest manifest;
     ASSERT_TRUE(IO::RunManifest::read(dir/"output/run.json",manifest,message))<<message;
     ASSERT_NE(manifest.entry("reservoir","A"),nullptr);EXPECT_EQ(manifest.entry("reservoir","A")->time->count,20);
     auto reopened=HydroCouple::SDK::ResultsModelComponent::open(dir/"output/run.json","reservoir",message);ASSERT_NE(reopened,nullptr)<<message;reopened->initialize();
@@ -94,7 +105,7 @@ TEST(FVQualRunCli, RunsACompositionAndItsManifestReopensAsAComponent)
     const std::string command =
         std::string("\"") + FVQUAL_CLI_PATH + "\" run \"" +
         FVQUAL_COMPOSITIONS_DIR "/standalone_basin.json\"";
-    ASSERT_EQ(std::system(command.c_str()), 0) << command;
+    ASSERT_EQ(run(command), 0) << command;
 
     // The artifacts are real: rows in the CSV, a manifest naming the run.
     std::ifstream csv(outputDirectory() / "results.csv");

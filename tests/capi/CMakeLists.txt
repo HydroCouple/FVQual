@@ -6,6 +6,7 @@
 add_executable(fvqual_capi_tests test_capi.c c89_header_check.c)
 
 target_link_libraries(fvqual_capi_tests PRIVATE FVQual::fvqual_core)
+fvqual_colocate_runtime_dlls(fvqual_capi_tests)
 
 if(NOT MSVC)
     target_link_libraries(fvqual_capi_tests PRIVATE m)

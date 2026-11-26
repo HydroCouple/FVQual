@@ -15,5 +15,8 @@ add_executable(fvqual-degray degray/main.cpp)
 target_link_libraries(fvqual-degray PRIVATE FVQual::fvqual_core)
 target_compile_features(fvqual-degray PRIVATE cxx_std_20)
 
+fvqual_colocate_runtime_dlls(fvqual)
+fvqual_colocate_runtime_dlls(fvqual-degray)
+
 install(TARGETS fvqual fvqual-degray
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

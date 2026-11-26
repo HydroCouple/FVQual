@@ -78,7 +78,7 @@ file(MAKE_DIRECTORY "${FVQual_TEST_OUTPUT_DIR}")
 
 target_compile_definitions(fvqual_tests
     PRIVATE FVQual_TEST_OUTPUT_DIR="${FVQual_TEST_OUTPUT_DIR}"
-    PRIVATE FVQUAL_COMPONENTS_DIR="${CMAKE_BINARY_DIR}/components"
+    PRIVATE FVQUAL_PLUGIN_PATH="$<TARGET_FILE:fvqual_component>"
     PRIVATE FVQUAL_CLI_PATH="$<TARGET_FILE:fvqual>"
     PRIVATE FVQUAL_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
     PRIVATE FVQUAL_COMPOSITIONS_DIR="${CMAKE_SOURCE_DIR}/tests/compositions")
@@ -86,6 +86,8 @@ target_compile_definitions(fvqual_tests
 if(FVQual_USE_NETCDF)
     target_compile_definitions(fvqual_tests PRIVATE FVQual_HAVE_NETCDF)
 endif()
+
+fvqual_colocate_runtime_dlls(fvqual_tests)
 
 add_subdirectory(capi)
 
