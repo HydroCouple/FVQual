@@ -78,7 +78,9 @@ TEST(ReservoirOperations, CApiAndComponentShareConfigurationAndBudgetAndRollback
     EXPECT_NE(fvq_sim_configure_json(sim,invalid.dump().c_str()),FVQ_OK);
     ASSERT_EQ(fvq_sim_initialize(sim),FVQ_OK)<<fvq_last_error();
     ASSERT_EQ(fvq_sim_advance(sim,1),FVQ_OK);
-    for(const auto &[id,value]:FVQual::Forcing::processBudgetValues(component.solver(),component.registry()).items()) {
+    // Named: a range-for over items() of a temporary json would iterate freed memory (C++20).
+    const J budget=FVQual::Forcing::processBudgetValues(component.solver(),component.registry());
+    for(const auto &[id,value]:budget.items()) {
         double amount=0;ASSERT_EQ(fvq_sim_budget_value(sim,id.c_str(),&amount),FVQ_OK)<<id; EXPECT_NEAR(amount,value.get<double>(),id.starts_with("budget_heat") ? 1e-3 : 1e-9)<<id;
     }
     uint64_t token;ASSERT_EQ(fvq_sim_save_state(sim,&token),FVQ_OK);ASSERT_EQ(fvq_sim_advance(sim,1),FVQ_OK);double before,after;
