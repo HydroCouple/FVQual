@@ -114,6 +114,13 @@ jobs:
           path: build/docs/doxygen/html/
           retention-days: 1
 
+      # Packaged here, not in the deploy job: deploy-pages can look the artifact up before an
+      # upload made in its own job is listed ("No artifacts named github-pages").
+      - name: Package the site for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/docs/doxygen/html/
+
   deploy:
     name: Deploy to GitHub Pages
     needs: build_doxygen_docs
@@ -129,20 +136,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Download Doxygen docs
-        uses: actions/download-artifact@v4
-        with:
-          name: doxygen-docs
-          path: site/
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/
-
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
