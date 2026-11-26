@@ -29,18 +29,40 @@ jobs:
           path: FVQual
 
       # The SDK is not published to a package registry yet, so it is built
-      # in-tree from a source checkout (FVQual_SDK_SOURCE_DIR).
+      # in-tree from a source checkout (FVQual_SDK_SOURCE_DIR). SDK 2.0, the
+      # CMake project FVQual builds against, is on removing_qt until it merges
+      # into dev (as in build_docs.yml).
       - name: Checkout HydroCoupleSDK
         uses: actions/checkout@v4
         with:
-          repository: cbuahin/HydroCoupleSDK
+          repository: HydroCouple/HydroCoupleSDK
+          ref: removing_qt
           path: HydroCoupleSDK
 
       - name: Checkout HydroCouple interfaces
         uses: actions/checkout@v4
         with:
-          repository: cbuahin/HydroCouple
+          repository: HydroCouple/HydroCouple
+          ref: dev
           path: HydroCouple
+
+      # Ninja needs cl.exe and link.exe on PATH. Runs before run-vcpkg so the
+      # vcpkg root that step exports is not overwritten by vcvars64 (as in the
+      # SDK's build_and_unit_test.yml).
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # GoogleTest comes from vcpkg.json's "tests" feature, at the same vcpkg
+      # commit as the manifest's builtin-baseline. Without it the test suite
+      # is skipped with only a warning.
+      - name: Set up vcpkg (manifest mode)
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+          vcpkgJsonGlob: FVQual/vcpkg.json
 
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
@@ -50,7 +72,10 @@ jobs:
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_MANIFEST_FEATURES=tests
           -DFVQual_SDK_SOURCE_DIR=${{ github.workspace }}/HydroCoupleSDK
+          -DHYDROCOUPLE_INCLUDE_DIR=${{ github.workspace }}/HydroCouple/include
           -DFVQual_BUILD_TESTS=ON
           -DFVQual_USE_NETCDF=OFF
           -DBUILD_TOOLS=ON
@@ -60,9 +85,11 @@ jobs:
         working-directory: FVQual
         run: cmake --build build --parallel
 
+      # --no-tests=error: a configure that silently dropped the suite fails here
+      # instead of passing with nothing run.
       - name: Test
         working-directory: FVQual
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --no-tests=error
 
       - name: Upload test outputs
         if: always()
