@@ -28,7 +28,7 @@ VerticalCoordinateKind SigmaVerticalCoordinate::kind() const
     return VerticalCoordinateKind::Sigma;
 }
 
-int SigmaVerticalCoordinate::layerCount() const
+int64_t SigmaVerticalCoordinate::layerCount() const
 {
     return m_mesh ? m_mesh->layerCount() : 0;
 }
@@ -39,7 +39,7 @@ bool SigmaVerticalCoordinate::isTimeVarying() const
 }
 
 double SigmaVerticalCoordinate::interfaceElevation(int64_t cellIndex,
-                                                   int interfaceIndex) const
+                                                   int64_t interfaceIndex) const
 {
     if (m_mesh == nullptr || cellIndex < 0 || cellIndex >= m_mesh->columnCount() ||
         interfaceIndex < 0 || interfaceIndex >= m_mesh->interfaceCount())
@@ -52,37 +52,30 @@ double SigmaVerticalCoordinate::interfaceElevation(int64_t cellIndex,
     // second derivation here would be free to disagree with them — silently,
     // and only for the stretched distributions where the arithmetic differs.
     // What a coupling partner needs is the mesh the model actually solved on.
-    return m_mesh->z(cellIndex, interfaceIndex);
+    return m_mesh->z(cellIndex, static_cast<int>(interfaceIndex));
 }
 
-void SigmaVerticalCoordinate::interfaceElevations(int64_t cellIndex,
-                                                  double *elevations) const
+int64_t SigmaVerticalCoordinate::columnCount() const
 {
-    if (elevations == nullptr || m_mesh == nullptr)
-    {
-        return;
-    }
+    return m_mesh ? m_mesh->columnCount() : 0;
+}
 
-    const int count = m_mesh->interfaceCount();
+uint64_t SigmaVerticalCoordinate::geometryEpoch() const
+{
+    return m_epochOffset + (m_mesh ? m_mesh->geometryEpoch() : 0);
+}
 
-    if (cellIndex < 0 || cellIndex >= m_mesh->columnCount())
-    {
-        for (int k = 0; k < count; ++k)
-        {
-            elevations[k] = kBadElevation;
-        }
-        return;
-    }
-
-    for (int k = 0; k < count; ++k)
-    {
-        elevations[k] = m_mesh->z(cellIndex, k);
-    }
+std::span<const double> SigmaVerticalCoordinate::interfaceElevations() const
+{
+    return m_mesh ? std::span<const double>(m_mesh->interfaceZ())
+                  : std::span<const double>();
 }
 
 void SigmaVerticalCoordinate::refresh(const FVQual::Mesh::LayeredMesh &mesh) noexcept
 {
+    const uint64_t nextEpoch = geometryEpoch() + 1;
     m_mesh = &mesh;
+    m_epochOffset = nextEpoch - mesh.geometryEpoch();
 }
 
 } // namespace FVQual::Component

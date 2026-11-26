@@ -53,6 +53,7 @@
 #include <vector>
 
 namespace FVQual::Kinetics {
+class ReactionStep;
 
 /*!
  * \brief Engine-computed per-cell fields a rate law may reference by name.
@@ -72,6 +73,10 @@ struct FVQual_EXPORT DerivedFields
     std::span<const double> light;     //!< Layer-mean irradiance (W/m²).
     std::span<const double> depth;     //!< Depth of the cell centre below the surface (m).
     std::span<const double> thickness; //!< Cell thickness (m).
+    //! Optional actual interface area / volume (1/m) for scoped water rates.
+    //! Empty retains the prismatic 1/thickness treatment.
+    std::span<const double> surfaceAreaPerVolume;
+    std::span<const double> bedAreaPerVolume;
 };
 
 /*!
@@ -115,8 +120,9 @@ enum class RateScope
     /*!
      * \brief Only in the cell touching the bed, per unit **area**.
      *
-     * Units are mass per unit area per second, and the engine divides by the
-     * bed cell's thickness to turn that into a concentration rate. Sediment
+     * Units are mass per unit area per second, and the engine uses bed
+     * interface area / cell volume to obtain a concentration rate (equivalent
+     * to dividing by thickness for a prism). Sediment
      * oxygen demand is quoted as a flux — g/m²/d — because that is what it is:
      * a property of the sediment surface, not of the water above it.
      *
@@ -207,6 +213,10 @@ public:
      * mistake than an intent, and the sum is available by writing one
      * expression.
      *
+     * A MsxBenthic inventory already uses mass per its declared storage area:
+     * rates use that same areal basis and act only at the bed, without conversion
+     * to a water concentration. Surface scope is refused for these inventories.
+     *
      * \param[in]  speciesId  Species the law applies to.
      * \param[in]  expression Rate law; units depend on \p scope.
      * \param[in]  scope      Where the law acts.
@@ -281,8 +291,14 @@ public:
     {
         return m_diagnostics;
     }
+    [[nodiscard]] const std::vector<std::string> &constantNames() const noexcept { return m_constantNames; }
+    [[nodiscard]] const std::vector<double> &constantValues() const noexcept { return m_constantValues; }
+    [[nodiscard]] const std::vector<int> &reactingSpecies() const noexcept { return m_reacting; }
+    //! Update a compiled constant without invalidating variable bindings.
+    [[nodiscard]] bool setConstant(const std::string &name,double value,std::string &message);
 
 private:
+    friend class ReactionStep;
     /*!
      * \brief One rate law, after compilation.
      */
@@ -294,6 +310,7 @@ private:
         int         species = -1; //!< Index in the registry, after compile().
         int         slot    = -1; //!< Index into m_reacting, after compile().
         RateScope   scope   = RateScope::WaterColumn;
+        bool        arealSpecies = false; //!< Bed inventory already has mass/area units.
     };
 
     [[nodiscard]] bool addRateImpl(const std::string &speciesId,

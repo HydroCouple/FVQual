@@ -11,21 +11,29 @@ add_library(fvqual_core
     hydro/equationofstate.cpp
     hydro/pressureclosure.cpp
     hydro/internalmode.cpp
+    hydro/horizontaldiffusion.cpp
+    hydro/internalcheckpoint.cpp
     hydro/heatbudget.cpp
+    hydro/thermalcolumn.cpp
     hydro/turbulence.cpp
     transport/euleriantransport.cpp
+    transport/scalartrace.cpp
+    transport/reactivetrace.cpp
     forcing/forcingfield.cpp
+    forcing/operationsconfiguration.cpp
     forcing/sources.cpp
     forcing/structures.cpp
     forcing/outletgroups.cpp
     kinetics/expression.cpp
     kinetics/odesolver.cpp
     kinetics/reactionnetwork.cpp
+    kinetics/reactiontrace.cpp
     kinetics/lightfield.cpp
     kinetics/templates.cpp
     kinetics/reactionfile.cpp
     transport/settling.cpp
     forcing/transfers.cpp
+    coupling/intervaltransfer.cpp
     state/speciesregistry.cpp
     state/statestore.cpp
     io/w2bathymetry.cpp
@@ -34,10 +42,17 @@ add_library(fvqual_core
     io/layeredugridwriter.cpp
     component/sigmaverticalcoordinate.cpp
     component/fvqualcomponent.cpp
+    component/fvqualdifferentiation.cpp
+    component/recordedinflowargument.cpp
+    component/operationsargument.cpp
     component/fvqualcomponentinfo.cpp
     capi/capi_engine.cpp
     capi/capi_mesh.cpp
     capi/capi_sim.cpp
+    capi/capi_coupling.cpp
+    capi/capi_differentiation.cpp
+    capi/capi_column.cpp
+    capi/capi_reactive.cpp
 )
 
 add_library(FVQual::fvqual_core ALIAS fvqual_core)

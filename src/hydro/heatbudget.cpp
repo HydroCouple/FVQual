@@ -2,116 +2,26 @@
 // Copyright (c) 2026 Caleb Buahin
 
 #include "fvqual/hydro/heatbudget.h"
+#include "fvqual/hydro/columnphysics.h"
 
 #include <algorithm>
 #include <cmath>
 
 namespace FVQual::Hydro {
 
-namespace {
-
-//! Stefan-Boltzmann constant (W/(m²·K⁴)).
-constexpr double kStefanBoltzmann = 5.670374419e-8;
-
-//! Absolute zero, for the radiation terms (deg C).
-constexpr double kAbsoluteZero = -273.15;
-
-[[nodiscard]] double kelvin(double celsius) noexcept
-{
-    return celsius - kAbsoluteZero;
-}
-
-} // namespace
-
 double saturationVapourPressure(double celsius) noexcept
 {
-    return 610.78 * std::exp(17.27 * celsius / (celsius + 237.3));
+    return ColumnPhysics::vapour(celsius);
 }
 
 HeatFluxTerms surfaceHeatFlux(const Meteorology &weather,
                               double surfaceTemperature) noexcept
 {
-    HeatFluxTerms terms;
-
-    // ── Shortwave ─────────────────────────────────────────────────────────
-
-    terms.netShortwave = (1.0 - weather.albedo) * weather.shortwave;
-
-    terms.surfaceSolar = weather.surfaceAbsorption * terms.netShortwave;
-    terms.penetratingSolar = terms.netShortwave - terms.surfaceSolar;
-
-    // ── Longwave in ───────────────────────────────────────────────────────
-
-    // Swinbank's emissivity from air temperature alone, with the usual cloud
-    // enhancement. It is an empirical fit, not a derivation, and it is the term
-    // most worth replacing with a measured incoming-longwave record when one
-    // exists.
-    const double airK      = kelvin(weather.airTemperature);
-    const double emissivity = 0.937e-5 * airK * airK;
-
-    // Clamped, because clearSkySolarRadiation clamps and these two must agree
-    // about what a cloud fraction is. They did not, and it cost a whole DeGray
-    // run: CE-QUAL-W2 records cloud in tenths, so a value of 10 arrived here
-    // and `1 + 0.17 C^2` turned the atmospheric longwave into eighteen times
-    // itself — an equilibrium temperature of 64 C under 11 C air.
-    const double cover = std::clamp(weather.cloudCover, 0.0, 1.0);
-
-    const double cloud = 1.0 + 0.17 * cover * cover;
-
-    terms.longwaveDown = (1.0 - weather.longwaveReflection) * emissivity *
-                         kStefanBoltzmann * airK * airK * airK * airK * cloud;
-
-    // ── Longwave out ──────────────────────────────────────────────────────
-
-    const double surfaceK = kelvin(surfaceTemperature);
-
-    terms.longwaveUp = -weather.waterEmissivity * kStefanBoltzmann * surfaceK *
-                       surfaceK * surfaceK * surfaceK;
-
-    // ── Latent and sensible ───────────────────────────────────────────────
-
-    // The wind function, shared by latent and sensible: they differ only in what
-    // drives them. Its coefficients are calibrated at their own reference
-    // height, which need not be the height the wind was measured at — see the
-    // note on Meteorology::evaporationHeight — so the wind is brought to that
-    // height first through the logarithmic profile.
-    const double measured = std::max(0.0, weather.windSpeed);
-
-    double speed = measured;
-
-    if (weather.evaporationHeight != weather.windHeight &&
-        weather.windRoughness > 0.0 && weather.windHeight > weather.windRoughness &&
-        weather.evaporationHeight > weather.windRoughness)
-    {
-        speed = measured * std::log(weather.evaporationHeight / weather.windRoughness) /
-                std::log(weather.windHeight / weather.windRoughness);
-    }
-
-    const double wind =
-        weather.evaporationA +
-        weather.evaporationB *
-            (weather.windExponent == 1.0 ? speed
-                                         : std::pow(speed, weather.windExponent));
-
-    const double saturated = saturationVapourPressure(surfaceTemperature);
-
-    // Vapour pressure of the air is the saturation pressure at its dew point —
-    // that is what a dew point *is*, and it avoids needing relative humidity
-    // and air temperature to agree.
-    const double ambient = saturationVapourPressure(weather.dewPoint);
-
-    // Negative when the surface is wetter than the air, which is the usual
-    // direction: evaporation cools.
-    terms.latent = -wind * (saturated - ambient);
-
-    // Conduction, through the Bowen ratio. Scaled by pressure because the
-    // psychrometric constant is: at altitude the same temperature difference
-    // moves less heat.
-    const double gamma = weather.psychrometric * weather.pressure / 101325.0;
-
-    terms.sensible = -wind * gamma * (surfaceTemperature - weather.airTemperature);
-
-    return terms;
+    const auto terms=ColumnPhysics::surface(weather,surfaceTemperature,weather.windSpeed,
+        weather.airTemperature,weather.dewPoint,weather.shortwave,weather.cloudCover,
+        weather.evaporationA,weather.evaporationB);
+    return {terms.netShortwave,terms.surfaceSolar,terms.penetratingSolar,terms.longwaveDown,
+            terms.longwaveUp,terms.latent,terms.sensible};
 }
 
 double WindStress::magnitude() const noexcept
@@ -121,17 +31,8 @@ double WindStress::magnitude() const noexcept
 
 WindStress windStress(const Meteorology &weather) noexcept
 {
-    WindStress stress;
-
-    const double speed = std::max(0.0, weather.windSpeed);
-
-    const double magnitude =
-        weather.airDensity * weather.dragCoefficient * speed * speed;
-
-    stress.x = magnitude * std::cos(weather.windDirection);
-    stress.y = magnitude * std::sin(weather.windDirection);
-
-    return stress;
+    const auto stress=ColumnPhysics::wind(weather,weather.windSpeed,weather.windDirection,weather.dragCoefficient);
+    return {stress.first,stress.second};
 }
 
 namespace {

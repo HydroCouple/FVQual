@@ -30,6 +30,7 @@
  */
 
 #include "fvqual/hydro/heatbudget.h"
+#include "fvqual/forcing/operationsconfiguration.h"
 #include "fvqual/hydro/internalmode.h"
 #include "fvqual/io/w2bathymetry.h"
 #include "fvqual/io/w2timeseries.h"
@@ -44,6 +45,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
+#include <iomanip>
+#include <stdexcept>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -216,6 +220,20 @@ int main(int argc, char **argv)
     // for December, and a bounded window is also the only way to run this where
     // a wall clock is enforced.
     const double endDay = argc > 3 ? std::atof(argv[3]) : kEndDay;
+    if (!std::isfinite(endDay) || endDay <= kStartDay || endDay > kEndDay) {
+        std::cerr << "end day must be in (64.5, 358.7]\n";
+        return 1;
+    }
+    std::filesystem::create_directories(outputs);
+    double maximumStep = 300.0;
+    if (const char *value = std::getenv("FVQUAL_MAX_DT")) {
+        char *end = nullptr;
+        maximumStep = std::strtod(value, &end);
+        if (!end || *end || !std::isfinite(maximumStep) || maximumStep <= 0) {
+            std::cerr << "FVQUAL_MAX_DT must be finite and positive\n";
+            return 1;
+        }
+    }
 
     // Optional fourth argument, "kepsilon", switches vertical mixing from
     // Richardson damping to the two-equation closure (F5.4). A switch rather
@@ -232,7 +250,20 @@ int main(int argc, char **argv)
     // interior still warms, the heat is being advected down by the wind-driven
     // cell rather than mixed down by the closure.
     const bool nomix = argc > 5 && std::string(argv[5]) == "nomix";
+    const bool scalarNomix = argc > 5 && std::string(argv[5]) == "scalar_nomix";
+    const bool viscosityNomix = argc > 5 && std::string(argv[5]) == "viscosity_nomix";
 
+    bool selectiveOutlet = false;
+    double outletElevation = 115.0;
+    if (const char *value = std::getenv("FVQUAL_OUTLET_ELEVATION")) {
+        char *end = nullptr;
+        outletElevation = std::strtod(value, &end);
+        if (!end || *end || !std::isfinite(outletElevation) || outletElevation <= kBottomElevation) {
+            std::cerr << "FVQUAL_OUTLET_ELEVATION must be above the bottom datum\n";
+            return 1;
+        }
+        selectiveOutlet = true;
+    }
     const int kLayers = layerCount();
 
     std::string message;
@@ -425,22 +456,47 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    for (const auto *series : {&met, &inflow, &inflowTemperature, &outflow}) {
+        if (series->firstDay() > kStartDay || series->lastDay() < endDay) {
+            std::cerr << "forcing does not cover requested simulation interval\n";
+            return 1;
+        }
+    }
+    if (hasSheltering && (sheltering.firstDay() > kStartDay || sheltering.lastDay() < endDay)) {
+        std::cerr << "wind sheltering does not cover requested interval\n";
+        return 1;
+    }
     const int air   = met.columnIndex("TAIR");
     const int dew   = met.columnIndex("TDEW");
     const int wind  = met.columnIndex("WIND");
     const int cloud = met.columnIndex("CLOUD");
     const int phi   = met.columnIndex("PHI");
 
+    if (std::min({air, dew, wind, cloud, phi}) < 0) {
+        std::cerr << "meteorology requires TAIR, TDEW, WIND, CLOUD and PHI\n";
+        return 1;
+    }
+
     // ── Solver ────────────────────────────────────────────────────────────
 
     FVQual::Hydro::InternalModeSolver  solver;
     FVQual::Hydro::InternalModeOptions options;
+    if (const char *value = std::getenv("FVQUAL_HEAT_AUDIT")) {
+        if (std::string(value) != "0" && std::string(value) != "1") {
+            std::cerr << "FVQUAL_HEAT_AUDIT must be 0 or 1\n";
+            return 1;
+        }
+        options.auditHeatTransport = std::string(value) == "1";
+    }
 
     options.gravity   = 9.80665;
     options.manningN  = 0.03;
     options.cflNumber = 0.5;
-    options.maxTimeStep = 300.0;
+    options.maxTimeStep = maximumStep;
     options.useTurbulenceClosure = closure;
+    options.stableDiffusivityScale = scalarNomix ? 0.0 : 1.0;
+    options.stableViscosityScale = viscosityNomix ? 0.0 : 1.0;
+    options.auditMomentum = true;
 
     if (nomix)
     {
@@ -527,7 +583,9 @@ int main(int argc, char **argv)
 
             FVQual::Forcing::Source release;
             release.column    = column;
-            release.placement = FVQual::Forcing::Placement::Uniform;
+            release.placement = selectiveOutlet ? FVQual::Forcing::Placement::SelectiveWithdrawal : FVQual::Forcing::Placement::Uniform;
+            release.elevation = outletElevation;
+            release.withdrawalAngle = 3.14; // DeGray control workbook C168, point sink.
 
             const int index = solver.sources().add(release, message);
 
@@ -552,8 +610,8 @@ int main(int argc, char **argv)
 
     daily << "jday,surface_temperature_C,bottom_temperature_C,thermocline_depth_m,"
              "surface_elevation_m,volume_m3,heat_content_J,equilibrium_C,"
-             "air_temperature_C,shortwave_W_m2\n";
-    daily.precision(6);
+             "air_temperature_C,shortwave_W_m2,water_expected_m3,water_independent_residual_m3,source_heat_in_independent_J,source_heat_out_audit_J\n";
+    daily.precision(17);
 
     // The whole profile at the dam, every day. Surface and bottom temperatures
     // say a reservoir stratified; only the profile says whether it stratified
@@ -592,11 +650,12 @@ int main(int argc, char **argv)
     std::ofstream field(outputs + "/degray_field.csv");
 
     field << "jday,column,layer,top_m,bottom_m,temperature_C\n";
+    field.precision(17);
 
     std::ofstream profiles(outputs + "/degray_profiles.csv");
 
     profiles << "jday,layer,depth_m,elevation_m,temperature_C\n";
-    profiles.precision(6);
+    profiles.precision(17);
 
     const double capacity = options.referenceDensity * options.heatCapacity;
 
@@ -626,7 +685,188 @@ int main(int argc, char **argv)
         trace.precision(9);
     }
 
-    while (day < endDay)
+    std::ofstream budgets(outputs + "/degray_budgets.csv");
+    budgets.precision(17);
+    bool budgetHeader = false;
+    double expectedWater = layered.totalVolume(), heatIn = 0, heatOut = 0;
+    std::ofstream heatAudit;
+    std::ofstream momentumAudit(outputs + "/degray_momentum.csv");
+    momentumAudit.precision(17);
+    momentumAudit << "jday,wind_impulse_x_kg_m_s,wind_impulse_y_kg_m_s,bed_impulse_x_kg_m_s,bed_impulse_y_kg_m_s,"
+        "vertical_residual_x_kg_m_s,vertical_residual_y_kg_m_s,wind_work_J,bed_dissipation_J,viscosity_dissipation_J,"
+        "implicit_dissipation_J,vertical_energy_residual_J,max_relative_impulse_residual,max_relative_energy_residual,"
+        "mode_impulse_x_kg_m_s,mode_impulse_y_kg_m_s,mode_energy_J,max_absolute_impulse_residual_kg_m_s,max_absolute_energy_residual_J\n";
+    double maximumCellHeatResidual = 0, maximumRelativeCellHeatResidual = 0;
+    if (options.auditHeatTransport) {
+        heatAudit.open(outputs + "/degray_heat_transport.csv");
+        heatAudit.precision(17);
+        heatAudit << "jday,column,layer,top_m,bottom_m,volume_m3,heat_J,initial_heat_J,"
+                     "horizontal_advection_J,vertical_advection_J,sources_J,"
+                     "horizontal_diffusion_J,vertical_diffusion_J,surface_J,other_J,residual_J,"
+                     "upward_advection_top_J,upward_advection_bottom_J,"
+                     "upward_diffusion_top_J,upward_diffusion_bottom_J,"
+                     "u_m_s,v_m_s,upward_relative_top_m_s,kz_top_m2_s,kz_bottom_m2_s,"
+                     "baroclinic_x_m_s2,baroclinic_y_m_s2,density_kg_m3,km_top_m2_s,km_bottom_m2_s\n";
+    }
+    const auto report = [&]() {
+        // Report from the deepest column, at the dam, where a profile would be
+        // taken.
+        // The deepest lane of the dam segment. At one lane this is the dam
+        // column and nothing changes; at more, reporting the LAST column would
+        // pick an outer lane, which sits on a higher bed and holds a different
+        // water mass — so a one-lane and a four-lane run would be compared at
+        // different places in the section and the difference read as physics.
+        const int64_t deep = deepestDamColumn(layered, lanes);
+
+        const double surfaceT = state.speciesAt(temperature, layered.cell(deep, 0));
+        const double bottomT =
+            state.speciesAt(temperature, layered.cell(deep, kLayers - 1));
+
+        // Thermocline: the interface with the largest temperature gradient.
+        double thermocline = 0.0;
+        double steepest    = 0.0;
+
+        for (int k = 1; k < kLayers; ++k)
+        {
+            const double above = state.speciesAt(temperature, layered.cell(deep, k - 1));
+            const double below = state.speciesAt(temperature, layered.cell(deep, k));
+
+            const double spacing =
+                0.5 * (layered.thickness()[static_cast<size_t>(layered.cell(deep, k - 1))] +
+                       layered.thickness()[static_cast<size_t>(layered.cell(deep, k))]);
+
+            const double gradient = spacing > 0.0 ? (above - below) / spacing : 0.0;
+
+            if (gradient > steepest)
+            {
+                steepest    = gradient;
+                thermocline = layered.z(deep, 0) - layered.z(deep, k);
+            }
+        }
+
+        double heat = 0.0;
+
+        for (int64_t cell = 0; cell < layered.cellCount(); ++cell)
+        {
+            heat += state.speciesAt(temperature, cell) *
+                    layered.cellVolume()[static_cast<size_t>(cell)] * capacity;
+        }
+
+        // The reported weather is the weather at the column being reported from,
+        // now that forcing may vary along the reservoir. Uniform here, so these
+        // are the same numbers the scalar path wrote — but reading them from the
+        // field keeps the report honest if the forcing is ever made spatial.
+        const FVQual::Hydro::Meteorology reported = solver.meteorology().at(deep);
+
+        daily << day << ',' << surfaceT << ',' << bottomT << ',' << thermocline << ','
+              << layered.surfaceElevation()[static_cast<size_t>(deep)] << ','
+              << layered.totalVolume() << ',' << heat << ','
+              << FVQual::Hydro::equilibriumTemperature(reported) << ','
+              << reported.airTemperature << ',' << reported.shortwave << ',' << expectedWater << ','
+              << layered.totalVolume() - expectedWater << ',' << heatIn << ',' << heatOut << '\n';
+
+        for (int k = 0; k < kLayers; ++k)
+        {
+            const double centre = 0.5 * (layered.z(deep, k) + layered.z(deep, k + 1));
+
+            // Every column, not just the dam, so the field can be sliced.
+            if (k == 0)
+            {
+                for (int64_t c = 0; c < layered.columnCount(); ++c)
+                    for (int kk = 0; kk < kLayers; ++kk)
+                        field << day << ',' << c << ',' << kk << ','
+                              << layered.z(c, kk) << ',' << layered.z(c, kk + 1) << ','
+                              << state.speciesAt(temperature, layered.cell(c, kk))
+                              << '\n';
+            }
+
+            profiles << day << ',' << k << ',' << layered.z(deep, 0) - centre << ','
+                     << centre << ','
+                     << state.speciesAt(temperature, layered.cell(deep, k)) << '\n';
+        }
+        const auto values = FVQual::Forcing::processBudgetValues(solver, registry);
+        if (options.auditHeatTransport) {
+            const auto &audit = solver.heatTransportAudit();
+            for (int64_t c = 0; c < layered.columnCount(); ++c)
+                for (int k = 0; k < kLayers; ++k) {
+                    const size_t cell = layered.cell(c,k), top = layered.interfaceSlot(c,k),
+                                 bottom = layered.interfaceSlot(c,k+1);
+                    const double heat = capacity * layered.cellVolume()[cell] * state.speciesAt(temperature,cell);
+                    const double expected = audit.initial[cell] + audit.horizontalAdvection[cell] +
+                        audit.verticalAdvection[cell] + audit.sources[cell] + audit.horizontalDiffusion[cell] +
+                        audit.verticalDiffusion[cell] + audit.surface[cell] + audit.other[cell];
+                    const double residual = heat - expected;
+                    maximumCellHeatResidual = std::max(maximumCellHeatResidual,std::abs(residual));
+                    maximumRelativeCellHeatResidual = std::max(maximumRelativeCellHeatResidual,
+                        std::abs(residual)/std::max({1.0,std::abs(heat),std::abs(audit.initial[cell])}));
+                    // Grid-relative upward velocity uses the actual wet area;
+                    // verticalFlux() itself is normalized by plan-polygon area.
+                    const double area = layered.interfaceArea()[top];
+                    const double w = area > 0 ? solver.verticalFlux()[top] * horizontal.faceArea()[c] / area : 0;
+                    heatAudit << day << ',' << c << ',' << k << ',' << layered.z(c,k) << ',' << layered.z(c,k+1)
+                        << ',' << layered.cellVolume()[cell] << ',' << heat << ',' << audit.initial[cell]
+                        << ',' << audit.horizontalAdvection[cell] << ',' << audit.verticalAdvection[cell]
+                        << ',' << audit.sources[cell] << ',' << audit.horizontalDiffusion[cell]
+                        << ',' << audit.verticalDiffusion[cell] << ',' << audit.surface[cell]
+                        << ',' << audit.other[cell] << ',' << residual
+                        << ',' << audit.upwardAdvection[top] << ',' << audit.upwardAdvection[bottom]
+                        << ',' << audit.upwardDiffusion[top] << ',' << audit.upwardDiffusion[bottom]
+                        << ',' << state.u[cell] << ',' << state.v[cell] << ',' << w
+                        << ',' << solver.eddyDiffusivity()[top] << ',' << solver.eddyDiffusivity()[bottom]
+                        << ',' << solver.baroclinicAccelerationX()[cell] << ',' << solver.baroclinicAccelerationY()[cell]
+                        << ',' << state.density[cell]
+                        << ',' << solver.eddyViscosity()[top] << ',' << solver.eddyViscosity()[bottom] << '\n';
+                }
+            heatAudit.flush();
+        }
+        if (!budgetHeader) {
+            budgets << "jday";
+            for (const auto &[id, value] : values.items()) budgets << ',' << id;
+            budgets << '\n';
+            budgetHeader = true;
+        }
+        budgets << day;
+        for (const auto &[id, value] : values.items()) budgets << ',' << value.get<double>();
+        budgets << '\n';
+        daily.flush(); profiles.flush(); field.flush(); budgets.flush();
+        FVQual::Hydro::MomentumColumnAudit momentum;
+        for (const auto &a : solver.momentumAudit()) {
+            momentum.windImpulseX+=a.windImpulseX; momentum.windImpulseY+=a.windImpulseY;
+            momentum.bedImpulseX+=a.bedImpulseX; momentum.bedImpulseY+=a.bedImpulseY;
+            momentum.verticalResidualX+=a.verticalResidualX; momentum.verticalResidualY+=a.verticalResidualY;
+            momentum.windWork+=a.windWork; momentum.bedDissipation+=a.bedDissipation;
+            momentum.viscosityDissipation+=a.viscosityDissipation; momentum.implicitDissipation+=a.implicitDissipation;
+            momentum.verticalEnergyResidual+=a.verticalEnergyResidual;
+            momentum.maxRelativeImpulseResidual=std::max(momentum.maxRelativeImpulseResidual,a.maxRelativeImpulseResidual);
+            momentum.maxRelativeEnergyResidual=std::max(momentum.maxRelativeEnergyResidual,a.maxRelativeEnergyResidual);
+            momentum.maxAbsoluteImpulseResidual=std::max(momentum.maxAbsoluteImpulseResidual,a.maxAbsoluteImpulseResidual);
+            momentum.maxAbsoluteEnergyResidual=std::max(momentum.maxAbsoluteEnergyResidual,a.maxAbsoluteEnergyResidual);
+            momentum.modeImpulseX+=a.modeImpulseX; momentum.modeImpulseY+=a.modeImpulseY; momentum.modeEnergy+=a.modeEnergy;
+        }
+        momentumAudit << day << ',' << momentum.windImpulseX << ',' << momentum.windImpulseY << ','
+            << momentum.bedImpulseX << ',' << momentum.bedImpulseY << ',' << momentum.verticalResidualX << ','
+            << momentum.verticalResidualY << ',' << momentum.windWork << ',' << momentum.bedDissipation << ','
+            << momentum.viscosityDissipation << ',' << momentum.implicitDissipation << ',' << momentum.verticalEnergyResidual << ','
+            << momentum.maxRelativeImpulseResidual << ',' << momentum.maxRelativeEnergyResidual << ','
+            << momentum.modeImpulseX << ',' << momentum.modeImpulseY << ',' << momentum.modeEnergy << ','
+            << momentum.maxAbsoluteImpulseResidual << ',' << momentum.maxAbsoluteEnergyResidual << '\n';
+        momentumAudit.flush();
+        std::printf("report day %.5f (%lld steps)\n", day, static_cast<long long>(steps));
+        std::fflush(stdout);
+    };
+    // Baseline weather for the initial report; each integration step refreshes it.
+    solver.meteorology().airTemperature.setUniform(met.valueAt(day, air));
+    solver.meteorology().dewPoint.setUniform(met.valueAt(day, dew));
+    solver.meteorology().shortwave.setUniform(FVQual::Hydro::clearSkySolarRadiation(
+        day, kLatitude, met.valueAt(day, cloud) / 10.0));
+    if (!daily || !profiles || !field || !budgets || (options.auditHeatTransport && !heatAudit)) {
+        std::cerr << "cannot open DeGray output files\n";
+        return 1;
+    }
+    report();
+    nextWrite += 1.0;
+    while (day < endDay - 1e-12)
+
     {
         FVQual::Forcing::MeteorologyField &weather = solver.meteorology();
 
@@ -722,8 +962,38 @@ int main(int argc, char **argv)
             }
         }
 
-        const double dt = std::min(solver.stableTimeStep(), 300.0);
+        // Split at forcing knots and reports. W2 forcing is linear in Julian
+        // day; sampling at each step's opening preserves that convention and
+        // refinement measures its temporal integration error explicitly.
+        double nextKnot = endDay;
+        for (const auto *series : {&met, &inflow, &inflowTemperature, &outflow, &sheltering}) {
+            const auto found = std::upper_bound(series->time().begin(), series->time().end(), day + 1e-10);
+            if (found != series->time().end()) nextKnot = std::min(nextKnot, *found);
+        }
+        const double targetDay = std::min({endDay, nextWrite, nextKnot});
+        const double dt = std::min({solver.stableTimeStep(), maximumStep, (targetDay - day) * 86400.0});
 
+        double withdrawalTemperature = 0;
+        for (int l = 0; l < lanes; ++l) {
+            const int64_t column = layered.columnCount() - lanes + l;
+            double weighted = 0, thickness = 0;
+            for (int k = 0; k < kLayers; ++k) {
+                const size_t cell = static_cast<size_t>(layered.cell(column, k));
+                weighted += layered.thickness()[cell] * state.speciesAt(temperature, cell);
+                thickness += layered.thickness()[cell];
+            }
+            if (selectiveOutlet) {
+                // Probe the stated point sink on the opening geometry. This
+                // uses the shared placement formula, so it is an audit rather
+                // than an independent oracle for the selective envelope.
+                withdrawalTemperature += outflowShare[l] * solver.sources().withdrawalMean(
+                    layered, outflowIndices[l], -qout * outflowShare[l], state.density,
+                    options.gravity, options.referenceDensity, state.speciesBlock(temperature));
+            } else withdrawalTemperature += outflowShare[l] * weighted / thickness;
+        }
+        expectedWater += (qin - qout) * dt;
+        heatIn += qin * inflowT * capacity * dt;
+        heatOut += qout * withdrawalTemperature * capacity * dt;
         if (!solver.step(dt, message))
         {
             std::cerr << "step failed on day " << day << ": " << message << '\n';
@@ -731,6 +1001,7 @@ int main(int argc, char **argv)
         }
 
         day += dt / 86400.0;
+        if (std::abs(day - targetDay) < 1e-10) day = targetDay;
         ++steps;
 
         // A Courant violation is silent unless something says so. DeGray's
@@ -787,7 +1058,7 @@ int main(int argc, char **argv)
             warnedFloor = true;
         }
 
-        if (day < nextWrite)
+        if (day < nextWrite - 1e-10 && day < endDay - 1e-10)
             continue;
 
         // Advance the schedule, do not rebase it on the time actually reached.
@@ -799,80 +1070,8 @@ int main(int argc, char **argv)
         // expects to find a timing bug.
         nextWrite += 1.0;
 
-        // Report from the deepest column, at the dam, where a profile would be
-        // taken.
-        // The deepest lane of the dam segment. At one lane this is the dam
-        // column and nothing changes; at more, reporting the LAST column would
-        // pick an outer lane, which sits on a higher bed and holds a different
-        // water mass — so a one-lane and a four-lane run would be compared at
-        // different places in the section and the difference read as physics.
-        const int64_t deep = deepestDamColumn(layered, lanes);
+        report();
 
-        const double surfaceT = state.speciesAt(temperature, layered.cell(deep, 0));
-        const double bottomT =
-            state.speciesAt(temperature, layered.cell(deep, kLayers - 1));
-
-        // Thermocline: the interface with the largest temperature gradient.
-        double thermocline = 0.0;
-        double steepest    = 0.0;
-
-        for (int k = 1; k < kLayers; ++k)
-        {
-            const double above = state.speciesAt(temperature, layered.cell(deep, k - 1));
-            const double below = state.speciesAt(temperature, layered.cell(deep, k));
-
-            const double spacing =
-                0.5 * (layered.thickness()[static_cast<size_t>(layered.cell(deep, k - 1))] +
-                       layered.thickness()[static_cast<size_t>(layered.cell(deep, k))]);
-
-            const double gradient = spacing > 0.0 ? (above - below) / spacing : 0.0;
-
-            if (gradient > steepest)
-            {
-                steepest    = gradient;
-                thermocline = layered.z(deep, 0) - layered.z(deep, k);
-            }
-        }
-
-        double heat = 0.0;
-
-        for (int64_t cell = 0; cell < layered.cellCount(); ++cell)
-        {
-            heat += state.speciesAt(temperature, cell) *
-                    layered.cellVolume()[static_cast<size_t>(cell)] * capacity;
-        }
-
-        // The reported weather is the weather at the column being reported from,
-        // now that forcing may vary along the reservoir. Uniform here, so these
-        // are the same numbers the scalar path wrote — but reading them from the
-        // field keeps the report honest if the forcing is ever made spatial.
-        const FVQual::Hydro::Meteorology reported = weather.at(deep);
-
-        daily << day << ',' << surfaceT << ',' << bottomT << ',' << thermocline << ','
-              << layered.surfaceElevation()[static_cast<size_t>(deep)] << ','
-              << layered.totalVolume() << ',' << heat << ','
-              << FVQual::Hydro::equilibriumTemperature(reported) << ','
-              << reported.airTemperature << ',' << reported.shortwave << '\n';
-
-        for (int k = 0; k < kLayers; ++k)
-        {
-            const double centre = 0.5 * (layered.z(deep, k) + layered.z(deep, k + 1));
-
-            // Every column, not just the dam, so the field can be sliced.
-            if (k == 0)
-            {
-                for (int64_t c = 0; c < layered.columnCount(); ++c)
-                    for (int kk = 0; kk < kLayers; ++kk)
-                        field << day << ',' << c << ',' << kk << ','
-                              << layered.z(c, kk) << ',' << layered.z(c, kk + 1) << ','
-                              << state.speciesAt(temperature, layered.cell(c, kk))
-                              << '\n';
-            }
-
-            profiles << day << ',' << k << ',' << layered.z(deep, 0) - centre << ','
-                     << centre << ','
-                     << state.speciesAt(temperature, layered.cell(deep, k)) << '\n';
-        }
     }
 
     daily.close();
@@ -882,7 +1081,7 @@ int main(int argc, char **argv)
     std::ofstream final(outputs + "/degray_final_profile.csv");
 
     final << "depth_m,elevation_m,temperature_C\n";
-    final.precision(6);
+    final.precision(17);
 
     const int64_t deep = deepestDamColumn(layered, lanes);
 
@@ -900,5 +1099,23 @@ int main(int argc, char **argv)
                 "degray_profiles.csv and degray_final_profile.csv to %s\n",
                 static_cast<long long>(steps), day, outputs.c_str());
 
-    return 0;
+    std::ofstream summary(outputs + "/driver.json");
+    summary << nlohmann::json({{"start_jday", kStartDay}, {"end_jday", day},
+        {"columns", layered.columnCount()}, {"layers", kLayers}, {"dam_column", deep},
+        {"outlet_placement", selectiveOutlet ? "selective-point" : "uniform"},
+        {"outlet_elevation_m", selectiveOutlet ? nlohmann::json(outletElevation) : nlohmann::json(nullptr)},
+        {"withdrawal_heat_audit", selectiveOutlet ? "shared placement probe; not independent envelope" : "independent thickness-weighted uniform mean"},
+        {"maximum_step_s", maximumStep}, {"steps", steps}, {"wind_stress", !nowind},
+        {"heat_transport_audit", options.auditHeatTransport},
+        {"maximum_cell_heat_residual_J", maximumCellHeatResidual},
+        {"maximum_relative_cell_heat_residual", maximumRelativeCellHeatResidual},
+        {"shear_mixing_reduced", nomix}, {"convective_mixing_retained", true},
+        {"stable_scalar_mixing_scale",options.stableDiffusivityScale},
+        {"stable_viscosity_scale",options.stableViscosityScale},
+        {"momentum_audit_scope","implicit vertical solve; mode correction measured separately; not full mechanical energy closure"},
+        {"closure", closure ? "kepsilon" : "richardson"}, {"hypsography", !nohyps},
+        {"barotropic_floor_binding", warnedFloor}, {"forcing_clock", "1980 W2 Julian day; linear, opening-step sample"},
+        {"geometry_scope", "laterally averaged W2 cross sections; lateral lanes are inferred, not surveyed"}}).dump(2);
+    return (daily && profiles && field && budgets && final && summary && momentumAudit &&
+            (!options.auditHeatTransport || heatAudit)) ? 0 : 1;
 }

@@ -15,8 +15,9 @@ Reports bias and RMSE by date and by depth band, and draws the comparison.
 
 Usage: python3 compare_observed.py [results-dir] [prf_dam.npt]
 
-NOTE: written while the build sandbox was unavailable and therefore never
-executed. Run it before trusting anything it prints.
+For registered development/reserved splits, strict sampling and refinement,
+use seasonal_validation.py. This legacy plotting entry point now brackets
+recorded times instead of matching the nearest day.
 """
 
 import os
@@ -130,27 +131,26 @@ def mixed_layer_depth(depth, temperature, drop=MIXED_LAYER_DROP):
     return float(depth[first - 1] + weight * (depth[first] - depth[first - 1]))
 
 
-#! A cast further than this from any modelled day is not comparable.
-MATCH_TOLERANCE = 2.0
-
-
 def model_profile(profiles, day):
-    """The modelled profile nearest `day`, surface first.
-
-    Returns nearest = None when the run does not cover the cast. Without this
-    a shortened run silently compares its final profile against every later
-    measurement — a run stopping in November was being scored against a
-    December cast six weeks away, which is not an error in the model.
-    """
-    days = profiles["jday"].unique()
-    nearest = days[np.abs(days - day).argmin()]
-
-    if abs(nearest - day) > MATCH_TOLERANCE:
+    """Exact or bracketed daily profile, with no time/depth extrapolation."""
+    days = np.sort(profiles["jday"].unique())
+    if not len(days) or day < days[0] or day > days[-1]:
         return None, None, None
-
-    slab = profiles[profiles.jday == nearest].sort_values("depth_m")
-
-    return nearest, slab.depth_m.values, slab.temperature_C.values
+    i = np.searchsorted(days, day)
+    if i < len(days) and abs(days[i] - day) < 1e-9:
+        slab = profiles[profiles.jday == days[i]].sort_values("depth_m")
+        return day, slab.depth_m.values, slab.temperature_C.values
+    if i == 0 or i == len(days) or days[i] - days[i-1] > 1.01:
+        return None, None, None
+    a = profiles[profiles.jday == days[i-1]].sort_values("depth_m")
+    b = profiles[profiles.jday == days[i]].sort_values("depth_m")
+    lo, hi = max(a.depth_m.min(), b.depth_m.min()), min(a.depth_m.max(), b.depth_m.max())
+    depth = np.unique(np.concatenate((a.depth_m.values, b.depth_m.values)))
+    depth = depth[(depth >= lo) & (depth <= hi)]
+    w = (day-days[i-1])/(days[i]-days[i-1])
+    values = ((1-w)*np.interp(depth,a.depth_m,a.temperature_C) +
+              w*np.interp(depth,b.depth_m,b.temperature_C))
+    return day, depth, values
 
 
 def compare(profiles, observed):
@@ -182,10 +182,10 @@ def compare(profiles, observed):
             "n": int(inside.sum()),
             "bias": float(error.mean()),
             "rmse": float(np.sqrt((error ** 2).mean())),
-            "surface_observed": float(measured[0]),
-            "surface_model": float(modelled[0]),
-            "bottom_observed": float(measured[-1]),
-            "bottom_model": float(modelled[-1]),
+            "surface_observed": float(measured[inside][0]),
+            "surface_model": float(interpolated[0]),
+            "bottom_observed": float(measured[inside][-1]),
+            "bottom_model": float(interpolated[-1]),
             "mld_observed": mixed_layer_depth(depth, measured),
             "mld_model": mixed_layer_depth(mdepth, modelled),
         })
@@ -323,7 +323,7 @@ def figure_mixed_layer(table, path):
              lw=1.0, ms=3, alpha=0.8)
 
     top.set_ylabel("temperature (°C)")
-    top.set_title("Surface (solid) and bottom (dashed)")
+    top.set_title("Shallowest (solid) and deepest (dashed) common observed depths")
     top.legend(loc="upper left", fontsize=8.5)
 
     bottom.plot(table.observed_day, table.mld_observed, "o-", color=INK,

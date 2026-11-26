@@ -12,3 +12,15 @@ target_compile_features(fvqual-verify PRIVATE cxx_std_20)
 # Not installed: this is a development and documentation tool, not part of the
 # shipped model.
 set_target_properties(fvqual-verify PROPERTIES EXCLUDE_FROM_ALL FALSE)
+
+add_executable(fvqual-circulation-review circulation_review.cpp)
+target_link_libraries(fvqual-circulation-review PRIVATE FVQual::fvqual_core)
+target_compile_features(fvqual-circulation-review PRIVATE cxx_std_20)
+
+add_executable(fvqual-scalar-derivative-review scalar_derivative_review.cpp)
+target_link_libraries(fvqual-scalar-derivative-review PRIVATE FVQual::fvqual_core)
+target_compile_features(fvqual-scalar-derivative-review PRIVATE cxx_std_20)
+
+add_executable(fvqual-reactive-sdk-review reactive_sdk_review.cpp)
+target_link_libraries(fvqual-reactive-sdk-review PRIVATE FVQual::fvqual_core)
+target_compile_features(fvqual-reactive-sdk-review PRIVATE cxx_std_20)

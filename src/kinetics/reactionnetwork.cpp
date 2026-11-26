@@ -7,6 +7,7 @@
 #include "fvqual/parallel.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace FVQual::Kinetics {
@@ -102,6 +103,7 @@ bool ReactionNetwork::addRateImpl(const std::string &speciesId,
 bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
                               std::string &message)
 {
+    m_compiled = false;
     const int species = registry.count();
 
     // The variable table every expression is bound against: species first, in
@@ -168,6 +170,12 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
                       "', which is not registered";
             return false;
         }
+        rate.arealSpecies = registry.definition(rate.species).kind == State::SpeciesKind::MsxBenthic;
+        if (rate.arealSpecies && rate.scope == RateScope::Surface)
+        {
+            message = "a benthic inventory rate cannot be surface-scoped";
+            return false;
+        }
 
         // One slot per reacting species, shared by every scope's law for it, so
         // the rates add into one derivative instead of being applied in turn.
@@ -187,7 +195,7 @@ bool ReactionNetwork::compile(const State::SpeciesRegistry &registry,
         // A scoped law is areal, and the engine divides by thickness to make it
         // a concentration rate — so the thickness field is needed whether or not
         // the expression mentions it.
-        if (rate.scope != RateScope::WaterColumn)
+        if (rate.scope != RateScope::WaterColumn && !rate.arealSpecies)
             m_derivedUsed[DerivedThickness] = true;
 
         // Every name in the expression must resolve. An unbound name would
@@ -245,11 +253,21 @@ bool ReactionNetwork::usesLight() const noexcept
     return m_derivedUsed[DerivedLight];
 }
 
+bool ReactionNetwork::setConstant(const std::string &name,double value,std::string &message)
+{
+    const auto it=std::find(m_constantNames.begin(),m_constantNames.end(),name);
+    if(it==m_constantNames.end() || !std::isfinite(value)) {
+        message="reaction constant must exist and have a finite value";return false;
+    }
+    m_constantValues[static_cast<size_t>(it-m_constantNames.begin())]=value;
+    message.clear();return true;
+}
+
 bool ReactionNetwork::usesCellPosition() const noexcept
 {
     for (const Rate &rate : m_rates)
     {
-        if (rate.scope != RateScope::WaterColumn)
+        if (rate.scope != RateScope::WaterColumn || rate.arealSpecies)
             return true;
     }
 
@@ -306,6 +324,19 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
     const int laws      = static_cast<int>(m_rates.size());
 
     const bool scoped = usesCellPosition();
+
+    for (const auto field : {fields.surfaceAreaPerVolume, fields.bedAreaPerVolume})
+    {
+        if (field.empty()) continue;
+        if (static_cast<int64_t>(field.size()) < cellCount ||
+            !std::all_of(field.begin(), field.end(), [](double x) {
+                return std::isfinite(x) && x >= 0.0;
+            }))
+        {
+            message = "scoped reaction area/volume fields must cover all cells with finite non-negative values";
+            return false;
+        }
+    }
 
     if (scoped && static_cast<int64_t>(position.size()) < cellCount)
     {
@@ -397,9 +428,9 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
         const unsigned char flags =
             position.empty() ? CellInterior : position[static_cast<size_t>(cell)];
 
-        // An areal rate — at the bed or at the surface — becomes a
-        // concentration rate over that cell's own thickness, so the same law
-        // delivers the same mass flux however the column is layered.
+        // The optional interface area/volume factors retain finite-volume
+        // fluxes under depth-varying storage. Thickness is the prism fallback
+        // and remains the geometric thickness exposed to rate expressions.
         //
         // Computed for every cell, not only scoped ones, even though only
         // scoped ones use it. An earlier version zeroed it away from the bed,
@@ -407,7 +438,11 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
         // showed that removing the scope check below then changed nothing, so
         // nothing was testing it. One mechanism, and it is the check.
         const double perThickness =
-            scoped ? 1.0 / derived[DerivedThickness][static_cast<size_t>(cell)] : 0.0;
+            scoped && !fields.thickness.empty() ? 1.0 / fields.thickness[static_cast<size_t>(cell)] : 0.0;
+        const double surfaceFactor = fields.surfaceAreaPerVolume.empty()
+            ? perThickness : fields.surfaceAreaPerVolume[static_cast<size_t>(cell)];
+        const double bedFactor = fields.bedAreaPerVolume.empty()
+            ? perThickness : fields.bedAreaPerVolume[static_cast<size_t>(cell)];
 
         // The reacting species are refreshed from the integrator's state on
         // every derivative evaluation; the rest stay frozen through the
@@ -431,12 +466,14 @@ bool ReactionNetwork::integrate(const State::SpeciesRegistry &registry,
 
                 if (!appliesAt(law.scope, flags))
                     continue;
+                if (law.arealSpecies && !(flags & CellAtBed))
+                    continue;
 
                 const double value = evaluate_fast(law.expression, values);
 
-                rates[law.slot] += law.scope == RateScope::WaterColumn
+                rates[law.slot] += law.scope == RateScope::WaterColumn || law.arealSpecies
                                        ? value
-                                       : value * perThickness;
+                                       : value * (law.scope == RateScope::Surface ? surfaceFactor : bedFactor);
             }
         };
 

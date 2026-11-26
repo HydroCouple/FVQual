@@ -52,8 +52,8 @@
  * so the residual comes only from the discrete representation of the profile,
  * not from the coordinate itself.
  *
- * Two further mitigations were implemented, measured, and found not to help,
- * recorded here so they are not re-attempted blindly:
+ * Earlier mitigation measurements are historical, preceding the phase 5c
+ * steep-step gate and the following boundary corrections:
  *
  * - *Reference-profile subtraction* (a horizontally uniform rho_ref(z)):
  *   removed. In this Green-Gauss form any function of elevation alone
@@ -61,11 +61,12 @@
  *   effect on the spurious velocity was nil. Note this argument applies only
  *   to a z-dependent profile — subtracting the *constant* rho0 is a different
  *   matter entirely and is mandatory, per the paragraph above.
- * - *Piecewise-linear density reconstruction*: retained behind an option but
- *   measured at roughly 0.3% of the spurious velocity over a steep bed, not
- *   the order of magnitude first assumed. The dominant residual is the
- *   below-bed extrapolation where two columns have different depths, which is
- *   where future work should go.
+ * - *Piecewise-linear density reconstruction*: now includes one-sided surface
+ *   and bed slopes. Interior slopes remain minmod limited. At elevations below
+ *   a neighbour's bed the shared face is treated as a solid sidewall, using the
+ *   local pressure rather than extrapolated water beneath the neighbour.
+ *   Horizontally uniform linear density is balanced over a steep depth step;
+ *   nonlinear-profile truncation is measured under vertical refinement.
  *
  * \threadsafety One closure per thread; the working buffers are owned.
  */
@@ -77,6 +78,7 @@
 #include "fvqual/mesh/layeredmesh.h"
 
 #include <span>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -90,6 +92,10 @@ class FVQual_EXPORT IPressureClosure
 {
 public:
     virtual ~IPressureClosure() = default;
+
+    //! Deep copy for replay. External closures may refuse checkpointing.
+    [[nodiscard]] virtual std::unique_ptr<IPressureClosure> clone() const { return {}; }
+
 
     /*!
      * \brief Human-readable closure name for diagnostics.
@@ -136,16 +142,21 @@ public:
          * \brief Reconstruct density linearly within each layer, minmod
          *        limited, instead of treating it as piecewise constant.
          *
-         * Measured benefit is small — under a percent of the spurious
-         * velocity over steep bathymetry, not the order of magnitude
-         * originally assumed. Kept because it is nearly free and because it
-         * will matter once the below-bed treatment improves.
+         * Includes one-sided boundary slopes to preserve a linear profile.
+         * Interior slopes are minmod limited; nonlinear profile errors still
+         * require measured refinement. Piecewise-constant mode remains an
+         * explicit diagnostic alternative.
          */
         bool linearDensityReconstruction = true;
     };
 
     HydrostaticPressureClosure() = default;
     explicit HydrostaticPressureClosure(const Options &options) : m_options(options) {}
+
+    [[nodiscard]] std::unique_ptr<IPressureClosure> clone() const override
+    {
+        return std::make_unique<HydrostaticPressureClosure>(*this);
+    }
 
     [[nodiscard]] std::string name() const override;
     [[nodiscard]] bool        isNonHydrostatic() const noexcept override { return false; }

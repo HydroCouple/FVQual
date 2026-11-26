@@ -11,19 +11,20 @@ terrain-following sigma layers. It is the HydroCouple-native successor to the
 CE-QUAL-W2 class of reservoir models, and it is built to be driven from a
 script: opened, stepped, inspected, and steered while it runs.
 
-.. admonition:: Status — the Python package is not built yet
+.. admonition:: Status — initial C ABI package implemented
    :class: important
 
-   The compiled ``fvqual`` extension does not exist. What *does* exist is the
-   C API it will bind — a C89-clean, opaque-handle ABI in
-   ``include/fvqual/capi/`` — together with the engine behind it, which is
-   verified against closed-form solutions and usable today from C or C++.
+   ``python/fvqual`` provides owned meshes and simulations, interval transfer
+   receipts, checkpoints, recorded/live surface-coupling examples, ensembles
+   and reference-kernel, passive-scalar, controlled thermal-column and conditional
+   reactive-transport JVP/VJP operations. It uses standard-library ctypes
+   against the C89-clean ABI and requires a shared core library. See
+   ``python/README.md`` and ``examples/swmm_reservoir/README.md`` for runnable
+   examples and the exact supported scope.
 
-   These pages describe the surface the bindings will expose and the design
-   they will follow, so the shape is settled before the Cython is written.
-   They deliberately do not autodoc a module that has not been built: a
-   documentation site whose build depends on a missing package is a site that
-   fails from its first commit.
+   The design pages also describe future runtime controls and zero-copy views.
+   Those capabilities, Cython extensions, binary wheels and full solver
+   derivatives are not supplied by this initial package.
 
 .. grid:: 2
 
@@ -58,6 +59,7 @@ surface — not the file formats — is what the design pages concentrate on.
    :caption: Contents
 
    design
+   api
    related
 
 

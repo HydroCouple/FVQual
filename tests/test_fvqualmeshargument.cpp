@@ -76,7 +76,7 @@ TEST(FVQualMeshArgument, ASuppliedMeshBecomesTheColumnsAndTheBed)
 
     // Its three faces are the three columns, so the met input sizes to
     // them.
-    ASSERT_EQ(component.inputs().size(), 1u);
+    ASSERT_EQ(component.inputs().size(), 2u);
     EXPECT_EQ(component.inputs()[0]->shape()[0], 3);
 
     component.prepare();

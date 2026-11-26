@@ -1,0 +1,194 @@
+{
+  "schema_version": "1.1",
+  "metadata": {
+    "id": "reservoir-operations",
+    "caption": "Mixed mesh reservoir: scheduled operations and process budgets (synthetic)"
+  },
+  "components": [
+    {
+      "id": "reservoir",
+      "info": {
+        "component_info_id": "fvqual.component"
+      },
+      "arguments": {
+        "geometry_counts": {
+          "values": [
+            3,
+            3
+          ]
+        },
+        "geometry_values": {
+          "values": [
+            20,
+            10,
+            5,
+            10,
+            7,
+            120
+          ]
+        },
+        "mesh": {
+          "@uri": "../swmm_reservoir/reservoir.mesh.json"
+        },
+        "initial_temperature_c": {
+          "values": [
+            22,
+            16,
+            12
+          ]
+        },
+        "conservative_species": {
+          "tracer": 0.002
+        },
+        "maximum_time_step_s": {
+          "values": [
+            0.5
+          ]
+        },
+        "meteorology": {
+          "schema": "fvqual.operations/1.0",
+          "section": "meteorology",
+          "value": {
+            "values": {
+              "air_temperature_c": 19,
+              "dew_point_c": 12,
+              "wind_speed_m_s": 1,
+              "wind_towards_rad": 0,
+              "shortwave_w_m2": 100,
+              "cloud_fraction": 0.2
+            },
+            "records": [
+              {
+                "time_s": 0,
+                "shortwave_w_m2": 100
+              },
+              {
+                "time_s": 33.5,
+                "shortwave_w_m2": 200
+              }
+            ],
+            "coefficients": {
+              "wind_height_m": 10,
+              "evaporation_height_m": 2
+            }
+          }
+        },
+        "sources": {
+          "schema": "fvqual.operations/1.0",
+          "section": "sources",
+          "value": [
+            {
+              "id": "tributary",
+              "column": 0,
+              "discharge_m3_s": 0.01,
+              "placement": "surface",
+              "temperature_c": 18,
+              "concentrations": {
+                "tracer": 0.01
+              },
+              "schedule": [
+                {
+                  "time_s": 0,
+                  "discharge_m3_s": 0.01
+                },
+                {
+                  "time_s": 33.5,
+                  "discharge_m3_s": 0.02
+                }
+              ]
+            }
+          ]
+        },
+        "structures": {
+          "schema": "fvqual.operations/1.0",
+          "section": "structures",
+          "value": [
+            {
+              "id": "release_port",
+              "type": "pump",
+              "column": 2,
+              "capacity_m3_s": -0.002,
+              "placement": "uniform"
+            }
+          ]
+        },
+        "outlet_groups": {
+          "schema": "fvqual.operations/1.0",
+          "section": "outlet_groups",
+          "value": [
+            {
+              "id": "regulated_release",
+              "ports": [
+                "release_port"
+              ],
+              "demand_m3_s": 0.0005,
+              "blend": false,
+              "schedule": [
+                {
+                  "time_s": 0,
+                  "demand_m3_s": 0.0005
+                },
+                {
+                  "time_s": 40.5,
+                  "demand_m3_s": 0.001
+                }
+              ]
+            }
+          ]
+        },
+        "open_boundaries": {
+          "schema": "fvqual.operations/1.0",
+          "section": "open_boundaries",
+          "value": [
+            {
+              "id": "edge_inflow",
+              "type": "inflow",
+              "node_pairs": [
+                [
+                  0,
+                  1
+                ]
+              ],
+              "specific_discharge_m2_s": 0.0001,
+              "temperature_c": 18,
+              "concentrations": {
+                "tracer": 0.01
+              }
+            }
+          ]
+        },
+        "internal_transfers": {
+          "schema": "fvqual.operations/1.0",
+          "section": "internal_transfers",
+          "value": [
+            {
+              "id": "circulation",
+              "from_column": 0,
+              "to_column": 2,
+              "discharge_m3_s": 0.001,
+              "from_placement": "uniform",
+              "to_placement": "uniform"
+            }
+          ]
+        },
+        "reaction_deck": {
+          "schema": "fvqual.operations/1.0",
+          "section": "reaction_deck",
+          "value": "[species]\nreactive kg/m3 0.001\nparticles kg/m3 0.002\nsediment kg/m2 0 benthic\n[rates]\nreactive WATER 0 - 0.00001 * reactive\n[settling]\nparticles 0.001 sediment\n"
+        }
+      }
+    }
+  ],
+  "workflow": {
+    "strategy": "time_stepped"
+  },
+  "writers": [
+    {
+      "type": "csv",
+      "path": "output/fields.csv"
+    }
+  ],
+  "run": {
+    "manifest": "output/run.json"
+  }
+}

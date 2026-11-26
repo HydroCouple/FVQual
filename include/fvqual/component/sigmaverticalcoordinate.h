@@ -75,7 +75,9 @@ public:
     [[nodiscard]] HydroCouple::Spatial::VerticalCoordinateKind
     kind() const override;
 
-    [[nodiscard]] int layerCount() const override;
+    [[nodiscard]] int64_t layerCount() const override;
+    [[nodiscard]] int64_t columnCount() const override;
+    [[nodiscard]] uint64_t geometryEpoch() const override;
 
     /*!
      * \brief Always true.
@@ -94,16 +96,16 @@ public:
      * column.
      */
     [[nodiscard]] double interfaceElevation(int64_t cellIndex,
-                                            int interfaceIndex) const override;
+                                            int64_t interfaceIndex) const override;
 
-    void interfaceElevations(int64_t cellIndex,
-                             double *elevations) const override;
+    [[nodiscard]] std::span<const double> interfaceElevations() const override;
 
     //! Rebinds to a different mesh.
     void refresh(const FVQual::Mesh::LayeredMesh &mesh) noexcept;
 
 private:
     const FVQual::Mesh::LayeredMesh *m_mesh = nullptr;
+    uint64_t m_epochOffset = 0;
 };
 
 } // namespace FVQual::Component

@@ -157,6 +157,7 @@ int StructureSet::add(const Structure &structure, SourceSet &sources,
     // The source this structure will drive. Outlet works release, so the
     // placement must be one that describes an outflow.
     Source source;
+    source.origin = SourceOrigin::Structure;
     source.column      = structure.column;
     source.discharge   = 0.0;
     source.elevation   = structure.crestElevation;

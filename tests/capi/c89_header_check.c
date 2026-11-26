@@ -15,6 +15,11 @@
 #include "fvqual/capi/fvqual_options.h"
 #include "fvqual/capi/fvqual_sigma.h"
 #include "fvqual/capi/fvqual_sim.h"
+#include "fvqual/capi/fvqual_coupling.h"
+#include "fvqual/capi/fvqual_differentiation.h"
+#include "fvqual/capi/fvqual_column.h"
+#include "fvqual/capi/fvqual_reactive.h"
+#include "fvqual/capi/fvqual_configuration.h"
 
 /* Reference one symbol of each kind so the declarations are actually parsed
    rather than merely tokenized. */

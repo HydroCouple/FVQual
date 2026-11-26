@@ -136,6 +136,7 @@ bool LayeredMesh::regenerate(std::span<const double> surfaceElevation, std::stri
         }
     }
 
+    ++m_geometryEpoch;
     message.clear();
     return true;
 }

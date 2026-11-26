@@ -40,6 +40,18 @@ namespace FVQual::Mesh {
  */
 inline constexpr int64_t kNoFace = -1;
 
+//! Diagnostics describe geometry, not a claim of numerical accuracy. Boundary
+//! loops include islands and separate domains; intent needs a domain outline.
+struct GeometryReport
+{
+    int64_t triangles = 0, quads = 0, polygons = 0;
+    int64_t boundaryEdges = 0, boundaryLoops = 0, connectedDomains = 0;
+    double minimumArea = 0.0, maximumArea = 0.0;
+    double minimumNormalDistance = 0.0;
+    double maximumNonOrthogonalityDegrees = 0.0;
+    double maximumRelativeClosureError = 0.0;
+};
+
 /*!
  * \brief Tri-quad horizontal mesh with precomputed finite-volume geometry.
  *
@@ -66,6 +78,8 @@ public:
      */
     [[nodiscard]] bool build(const HydroCouple::SDK::IO::MeshDefinition &definition,
                              std::string &message);
+
+    [[nodiscard]] GeometryReport geometryReport() const;
 
     // ── Counts ────────────────────────────────────────────────────────────
 
@@ -192,6 +206,11 @@ public:
         return m_edgeCentroidDistance;
     }
 
+    //! Positive centroid separation projected on the face normal. Boundary
+    //! edges use centroid-to-face normal distance.
+    [[nodiscard]] const std::vector<double> &edgeNormalDistance() const noexcept
+    { return m_edgeNormalDistance; }
+
     /*!
      * \brief True when the edge has no right-hand face.
      */
@@ -241,6 +260,7 @@ private:
     std::vector<double>  m_edgeMidX;
     std::vector<double>  m_edgeMidY;
     std::vector<double>  m_edgeCentroidDistance;
+    std::vector<double>  m_edgeNormalDistance;
 
     std::vector<int64_t> m_faceEdgeOffsets;
     std::vector<int64_t> m_faceEdges;

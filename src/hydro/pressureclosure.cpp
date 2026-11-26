@@ -79,8 +79,20 @@ void HydrostaticPressureClosure::prepareColumns(const Mesh::LayeredMesh &mesh,
                 m_cumulative[base + static_cast<size_t>(k)] + anomaly * thickness;
         }
 
-        if (!m_options.linearDensityReconstruction || layers < 3)
+        if (!m_options.linearDensityReconstruction || layers < 2)
             continue;
+
+        // One-sided boundary slopes retain an exactly linear density profile.
+        // Setting either to zero introduces different surface/bed integrals
+        // in columns with different sigma spacing, even in resting water.
+        for (int k : {0,layers-1}) {
+            const int neighbour=k==0 ? 1 : layers-2;
+            const double centre=.5*(mesh.z(c,k)+mesh.z(c,k+1));
+            const double adjacent=.5*(mesh.z(c,neighbour)+mesh.z(c,neighbour+1));
+            const size_t cell=static_cast<size_t>(mesh.cell(c,k));
+            const size_t other=static_cast<size_t>(mesh.cell(c,neighbour));
+            m_slope[cell]=(density[cell]-density[other])/(centre-adjacent);
+        }
 
         for (int k = 1; k + 1 < layers; ++k)
         {
@@ -214,7 +226,10 @@ void HydrostaticPressureClosure::baroclinicAcceleration(const Mesh::LayeredMesh 
                 const double  sign  = owned ? 1.0 : -1.0;
 
                 const double facePressure =
-                    other == Mesh::kNoFace
+                    // Below the neighbour's bed this face is a solid sidewall.
+                    // Extrapolating the neighbour's water below that bed adds a
+                    // fictitious pressure contrast over a steep depth step.
+                    (other == Mesh::kNoFace || z <= mesh.z(other,layers))
                         ? here
                         : 0.5 * (here + columnIntegral(mesh, density, referenceDensity, other, z));
 

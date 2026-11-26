@@ -250,6 +250,37 @@ void translate(Advector &setup, EulerianTransport &engine, AdvectionScheme schem
 
 } // namespace
 
+TEST(EulerianTransport, AdmittedFluxAuditClosesEachCellWithoutChangingSolution)
+{
+    for (auto scheme : {AdvectionScheme::Upwind,AdvectionScheme::MusclFct}) {
+        Advector setup; setup.buildCirculation(8,3,800,40,6,.1);
+        EulerianTransport engine; engine.initialize(setup.layered);
+        std::vector<double> before(setup.layered.cellCount()), loads(before.size(),0);
+        for (size_t i=0;i<before.size();++i) before[i]=2+.2*std::sin(double(i));
+        loads[0]=3; loads.back()=-2; // Gross scalar load despite zero net water.
+        auto audited=before, plain=before;
+        FVQual::Transport::AdvectionAudit audit;
+        engine.advect(setup.layered,setup.volume,setup.edgeFlux,setup.verticalFlux,
+            {},{},10,scheme,audited,loads,&audit);
+        engine.advect(setup.layered,setup.volume,setup.edgeFlux,setup.verticalFlux,
+            {},{},10,scheme,plain,loads);
+        EXPECT_EQ(audited,plain);
+        double horizontal=0,vertical=0;
+        for (size_t i=0;i<before.size();++i) {
+            EXPECT_NEAR((audited[i]-before[i])*setup.volume[i],
+                audit.horizontal[i]+audit.vertical[i]+audit.sources[i],1e-10);
+            EXPECT_DOUBLE_EQ(audit.sources[i],10*loads[i]);
+            horizontal+=audit.horizontal[i]; vertical+=audit.vertical[i];
+        }
+        EXPECT_NEAR(horizontal,0,1e-10); EXPECT_NEAR(vertical,0,1e-10);
+        for (int64_t c=0;c<setup.layered.columnCount();++c)
+            for (int k=0;k<setup.layered.layerCount();++k)
+                EXPECT_DOUBLE_EQ(audit.vertical[setup.layered.cell(c,k)],10*(
+                    audit.interfaceFlux[setup.layered.interfaceSlot(c,k+1)]-
+                    audit.interfaceFlux[setup.layered.interfaceSlot(c,k)]));
+    }
+}
+
 TEST(EulerianTransport, UniformFieldIsPreservedExactly)
 {
     // The reconstruction must produce zero gradient for a uniform field, so

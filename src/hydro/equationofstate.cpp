@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Caleb Buahin
 
 #include "fvqual/hydro/equationofstate.h"
+#include "fvqual/hydro/columnphysics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,11 +11,7 @@ namespace FVQual::Hydro {
 
 double EquationOfState::freshwaterDensity(double temperature) noexcept
 {
-    const double t = std::clamp(temperature, -2.0, 100.0);
-
-    return 999.842594 + 6.793952e-2 * t - 9.095290e-3 * t * t +
-           1.001685e-4 * t * t * t - 1.120083e-6 * t * t * t * t +
-           6.536332e-9 * t * t * t * t * t;
+    return ColumnPhysics::freshwaterDensity(temperature);
 }
 
 double EquationOfState::density(double temperature, double salinity,

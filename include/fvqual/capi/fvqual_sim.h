@@ -183,6 +183,13 @@ FVQual_CAPI double fvq_sim_total_volume(const FVQ_Simulation *sim);
 FVQual_CAPI FVQ_ErrorCode fvq_sim_species_mass(const FVQ_Simulation *sim, int species,
                                                double *out);
 
+/* Copies a transported scalar and its current geometry for observation/review.
+   Cells are column-major, layers from surface to bed; interfaces have
+   [columns, layers+1] elevations in metres. All counts must match. Errors leave
+   outputs untouched. Copies remain valid after stepping/destroying the handle. */
+FVQual_CAPI FVQ_ErrorCode fvq_sim_scalar_snapshot(const FVQ_Simulation *sim, int species,
+    double *values, double *volumes, int64_t cells, double *interfaces, int64_t interfaceCount);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -218,6 +218,42 @@ void SourceSet::inflowConcentration(const Mesh::LayeredMesh &mesh, int species,
     }
 }
 
+void SourceSet::scalarLinearization(const Mesh::LayeredMesh &mesh,
+    std::vector<double> &withdrawal, std::vector<ScalarSourceEntry> &incoming) const
+{
+    withdrawal.assign(static_cast<size_t>(mesh.cellCount()),0.0); incoming.clear();
+    const size_t layers=static_cast<size_t>(mesh.layerCount());
+    for (size_t s=0;s<m_sources.size();++s) {
+        const auto &source=m_sources[s];
+        if (source.column<0 || source.column>=mesh.columnCount()) continue;
+        for (size_t k=0;k<layers;++k) {
+            const size_t cell=mesh.cell(source.column,static_cast<int>(k));
+            const double rate=source.discharge*m_sourceWeights.at(s*layers+k);
+            if (rate>0) incoming.push_back({cell,s,rate});
+            else withdrawal[cell]+=rate;
+        }
+    }
+}
+
+void SourceSet::scalarLoad(const Mesh::LayeredMesh &mesh, int species,
+                          int temperatureIndex, std::span<const double> ambient,
+                          std::vector<double> &out) const
+{
+    out.assign(static_cast<size_t>(mesh.cellCount()), 0.0);
+    const int layers = mesh.layerCount();
+    for (size_t s = 0; s < m_sources.size(); ++s) {
+        const auto &source = m_sources[s];
+        if (source.column < 0 || source.column >= mesh.columnCount()) continue;
+        const double incoming = species == temperatureIndex ? source.temperature :
+            static_cast<size_t>(species) < source.concentration.size() ? source.concentration[species] : 0;
+        for (int k = 0; k < layers; ++k) {
+            const size_t cell = static_cast<size_t>(mesh.cell(source.column, k));
+            out[cell] += source.discharge * m_sourceWeights[s * layers + k] *
+                (source.discharge > 0 ? incoming : ambient[cell]);
+        }
+    }
+}
+
 double SourceSet::netDischarge() const noexcept
 {
     double total = 0.0;
@@ -226,6 +262,25 @@ double SourceSet::netDischarge() const noexcept
         total += source.discharge;
 
     return total;
+}
+
+double SourceSet::withdrawalTimeStep(const Mesh::LayeredMesh &mesh,
+                                    std::span<const double> density, double gravity,
+                                    double referenceDensity, double courant) const
+{
+    std::vector<double> withdrawal(static_cast<size_t>(mesh.cellCount()), 0.0), weights;
+    for (const auto &source : m_sources) {
+        if (source.discharge >= 0 || source.column < 0 || source.column >= mesh.columnCount()) continue;
+        double envelope = 0, placed = 0;
+        weightsCore(source, mesh, density, gravity, referenceDensity, weights, envelope, placed);
+        for (int k = 0; k < mesh.layerCount(); ++k)
+            withdrawal[static_cast<size_t>(mesh.cell(source.column, k))] -= source.discharge * weights[k];
+    }
+    double limit = std::numeric_limits<double>::infinity();
+    for (size_t cell = 0; cell < withdrawal.size(); ++cell)
+        if (withdrawal[cell] > 0)
+            limit = std::min(limit, courant * mesh.cellVolume()[cell] / withdrawal[cell]);
+    return limit;
 }
 
 void SourceSet::weightsFor(const Source &source, const Mesh::LayeredMesh &mesh,

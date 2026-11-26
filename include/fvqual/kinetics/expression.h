@@ -31,6 +31,7 @@
 
 #include <string>
 #include <vector>
+#include "fvqual/fvqual_export.h"
 #include <functional>
 
 namespace FVQual::Kinetics {
@@ -102,7 +103,7 @@ struct Expression {
  * @param result    [out] Compiled postfix expression.
  * @returns 0 on success, -1 on parse error.
  */
-int parse(const std::string& expr_str, Expression& result);
+FVQual_EXPORT int parse(const std::string& expr_str, Expression& result);
 
 // ============================================================================
 // Variable binding (Tier 1 optimization)
@@ -120,7 +121,7 @@ int parse(const std::string& expr_str, Expression& result);
  * @param n_vars     Number of entries in name_table.
  * @returns Number of variables successfully bound.
  */
-int bind_variables(Expression& expr,
+FVQual_EXPORT int bind_variables(Expression& expr,
                    const char* const* name_table, int n_vars);
 
 /**
@@ -128,7 +129,7 @@ int bind_variables(Expression& expr,
  * @param expr  Compiled expression.
  * @returns Max stack depth (0 if expression is empty).
  */
-int compute_max_stack_depth(const Expression& expr);
+FVQual_EXPORT int compute_max_stack_depth(const Expression& expr);
 
 // ============================================================================
 // Evaluator
@@ -141,7 +142,7 @@ int compute_max_stack_depth(const Expression& expr);
  * @param var_lookup Function that maps variable name → value.
  * @returns Expression result.
  */
-double evaluate(const Expression& expr,
+FVQual_EXPORT double evaluate(const Expression& expr,
                 const std::function<double(const std::string&)>& var_lookup);
 
 /**
@@ -152,7 +153,7 @@ double evaluate(const Expression& expr,
  * @param n_vars Size of vars array.
  * @returns Expression result.
  */
-double evaluate(const Expression& expr, const double* vars, int n_vars);
+FVQual_EXPORT double evaluate(const Expression& expr, const double* vars, int n_vars);
 
 /**
  * @brief Fast evaluate using pre-bound variable indices and stack-free evaluation.
@@ -165,7 +166,7 @@ double evaluate(const Expression& expr, const double* vars, int n_vars);
  * @param vars  Variable values array. vars[tok.var_idx] is read for each variable.
  * @returns Expression result, or 0.0 if expression is invalid.
  */
-double evaluate_fast(const Expression& expr, const double* vars) noexcept;
+FVQual_EXPORT double evaluate_fast(const Expression& expr, const double* vars) noexcept;
 
 } // namespace FVQual::Kinetics
 

@@ -1,0 +1,86 @@
+{
+  "schema": "openswmm.reservoir-coupling/1.0",
+  "instance_id": "openswmm",
+  "model": "network.inp",
+  "role": "network_only",
+  "ownership": "swmm-network/fvqual-receiver",
+  "epoch_julian_day": 2461041.5,
+  "exchange_times_s": [
+    7.0,
+    15.0,
+    31.0,
+    60.0,
+    120.0
+  ],
+  "receiver_columns": 3,
+  "receiver_geometry": {
+    "x": [
+      0.0,
+      10.0,
+      10.0,
+      0.0,
+      20.0,
+      20.0
+    ],
+    "y": [
+      0.0,
+      0.0,
+      10.0,
+      10.0,
+      0.0,
+      10.0
+    ],
+    "z": [
+      -5.0,
+      -5.0,
+      -5.0,
+      -5.0,
+      -5.0,
+      -5.0
+    ],
+    "offsets": [
+      0,
+      3,
+      6,
+      10
+    ],
+    "nodes": [
+      1,
+      4,
+      2,
+      4,
+      5,
+      2,
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "species": {
+    "A": "tracer",
+    "B": "second_tracer"
+  },
+  "output_directory": "donor_output",
+  "outfalls": [
+    {
+      "id": "O",
+      "temperature": {
+        "mode": "native"
+      },
+      "placement": "surface",
+      "targets": [
+        {
+          "column": 0,
+          "face_id": "0",
+          "weight": 0.25
+        },
+        {
+          "column": 2,
+          "face_id": "2",
+          "weight": 0.75
+        }
+      ]
+    }
+  ]
+}

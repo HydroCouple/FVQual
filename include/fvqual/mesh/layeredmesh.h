@@ -47,6 +47,8 @@
 #include <string>
 #include <vector>
 
+namespace FVQual::Hydro { class InternalModeSolver; }
+
 namespace FVQual::Mesh {
 
 /*!
@@ -127,6 +129,9 @@ public:
     // ── Dimensions ────────────────────────────────────────────────────────
 
     [[nodiscard]] int layerCount() const noexcept { return m_layerCount; }
+
+    //! Changes whenever successfully regenerated interface storage invalidates views.
+    [[nodiscard]] uint64_t geometryEpoch() const noexcept { return m_geometryEpoch; }
 
     /*!
      * \brief Number of water columns — one per horizontal face.
@@ -322,11 +327,14 @@ public:
     [[nodiscard]] HaneyReport haneyReport(double limit = 0.2) const;
 
 private:
+    friend class FVQual::Hydro::InternalModeSolver;
+    void setGeometryEpochForRestore(uint64_t epoch) noexcept { m_geometryEpoch = epoch; }
     [[nodiscard]] bool regenerate(std::span<const double> surfaceElevation,
                                   std::string &message);
 
     const HorizontalMesh *m_horizontal = nullptr;
 
+    uint64_t m_geometryEpoch = 0;
     int     m_layerCount  = 0;
     int64_t m_columnCount = 0;
     double  m_minLayerThickness = 0.0;

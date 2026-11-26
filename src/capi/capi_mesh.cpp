@@ -151,6 +151,26 @@ FVQ_ErrorCode fvq_mesh_read_ugrid(const char *path, const char *meshName, FVQ_Me
     });
 }
 
+FVQ_ErrorCode fvq_mesh_read_package(const char *path, FVQ_Mesh **out)
+{
+    return guard([&]() -> FVQ_ErrorCode {
+        if (!path || !out) return fail(FVQ_ERR_NULL_ARGUMENT, "package path and output are required");
+        auto handle = std::make_unique<FVQ_Mesh_>();
+        HydroCouple::SDK::IO::MeshPackage package;
+        std::string message;
+        if (!HydroCouple::SDK::IO::readMeshPackage(path, package, message))
+            return fail(FVQ_ERR_FILE, message);
+        if (package.elevationKind != "bed-elevation")
+            return fail(FVQ_ERR_MESH, "sigma reservoir requires surveyed or explicit synthetic bed elevations");
+        for (const auto &boundary : package.boundaries)
+            if (boundary.type != "WALL") return fail(FVQ_ERR_UNSUPPORTED, "package has an unmapped non-wall boundary");
+        if (!handle->mesh.build(package.mesh, message)) return fail(FVQ_ERR_MESH, message);
+        handle->package = std::move(package);
+        *out = handle.release();
+        return succeed();
+    });
+}
+
 void fvq_mesh_destroy(FVQ_Mesh *mesh)
 {
     delete mesh;

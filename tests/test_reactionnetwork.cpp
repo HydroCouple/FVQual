@@ -50,6 +50,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -1628,3 +1629,36 @@ TEST(ReactionNetworkSolver, TemperatureIsAddressableByItsRegistryId)
         << "the temperature dependence had no effect";
 }
 
+TEST(ReactionNetwork, InvalidInterfaceFactorsAreRefusedBeforeStateChanges)
+{
+    Box box; ASSERT_NO_FATAL_FAILURE(box.build(2));
+    box.addSpecies("A",1); box.allocate();
+    std::string message;
+    ReactionNetwork network;
+    ASSERT_TRUE(network.addRate("A","0.1",FVQual::Kinetics::RateScope::Surface,message));
+    ASSERT_TRUE(network.compile(box.registry,message));
+    FVQual::Kinetics::DerivedFields fields; fields.thickness=box.thickness();
+    const auto before=box.state.species;
+    std::vector<double> factor(1,1);
+    fields.surfaceAreaPerVolume=factor;
+    EXPECT_FALSE(network.integrate(box.registry,box.state,box.cells(),1,message,fields,box.positions()));
+    EXPECT_EQ(box.state.species,before);
+    factor.resize(box.cells(),1);
+    for (double invalid : {-1.,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}) {
+        factor[0]=invalid; fields.surfaceAreaPerVolume=factor;
+        EXPECT_FALSE(network.integrate(box.registry,box.state,box.cells(),1,message,fields,box.positions()));
+        EXPECT_EQ(box.state.species,before);
+    }
+}
+
+TEST(ReactionNetwork, AStoredBenthicInventoryCannotReactAtTheAtmosphere)
+{
+    SpeciesRegistry registry; SpeciesDefinition sediment;
+    sediment.id="sediment"; sediment.units="kg/m2";
+    sediment.kind=FVQual::State::SpeciesKind::MsxBenthic;
+    std::string message; ASSERT_GE(registry.add(sediment,message),0);
+    ReactionNetwork network;
+    ASSERT_TRUE(network.addRate("sediment","0.1",FVQual::Kinetics::RateScope::Surface,message));
+    EXPECT_FALSE(network.compile(registry,message));
+    EXPECT_NE(message.find("benthic"),std::string::npos);
+}

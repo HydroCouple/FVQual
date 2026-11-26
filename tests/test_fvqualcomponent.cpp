@@ -78,7 +78,7 @@ TEST(FVQualComponent, ArgumentsAreReadableBeforeInitialize)
     EXPECT_EQ(component.status(), ComponentStatus::Created);
     // geometry_counts, geometry_values, and (since the provider pipeline)
     // the optional mesh, met_air_temperature, and kinetics_file.
-    ASSERT_EQ(component.arguments().size(), 5u);
+    ASSERT_GE(component.arguments().size(), 18u);
 }
 
 TEST(FVQualComponent, RunsTheFullLifecycleAndReportsDone)
@@ -122,7 +122,7 @@ TEST(FVQualComponent, PublishesLayeredTemperatureWithItsVerticalCoordinate)
     component.prepare();
     ASSERT_NE(component.status(), ComponentStatus::Failed);
 
-    ASSERT_EQ(component.outputs().size(), 1u);
+    ASSERT_GE(component.outputs().size(), 10u);
     HydroCouple::IOutput *output = component.outputs()[0];
     ASSERT_NE(output, nullptr);
 

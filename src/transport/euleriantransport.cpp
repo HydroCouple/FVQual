@@ -346,7 +346,8 @@ void EulerianTransport::applyDivergence(const Mesh::LayeredMesh &mesh,
                                         std::span<const double> cellSource,
                                         std::span<const double> sourceValue, double dt,
                                         std::span<const double> before,
-                                        std::span<double> after) const
+                                        std::span<double> after,
+                                        std::span<const double> scalarLoad) const
 {
     const Mesh::HorizontalMesh &horizontal = mesh.horizontal();
 
@@ -384,7 +385,9 @@ void EulerianTransport::applyDivergence(const Mesh::LayeredMesh &mesh,
 
             double mass = before[cell] * oldVolume[cell] - dt * outflow;
 
-            if (!cellSource.empty())
+            if (!scalarLoad.empty())
+                mass += dt * scalarLoad[cell];
+            else if (!cellSource.empty())
             {
                 const double discharge = cellSource[cell];
 
@@ -571,17 +574,53 @@ void EulerianTransport::advect(const Mesh::LayeredMesh &mesh,
                                std::span<const double> verticalFlux,
                                std::span<const double> cellSource,
                                std::span<const double> sourceValue, double dt,
-                               AdvectionScheme scheme, std::span<double> values)
+                               AdvectionScheme scheme, std::span<double> values,
+                               std::span<const double> scalarLoad, AdvectionAudit *audit)
 {
     if (dt <= 0.0 || mesh.cellCount() <= 0)
         return;
 
     computeLowOrderFluxes(mesh, edgeLayerFlux, verticalFlux, values);
 
+    // Record the same low-order + admitted correction used by the update,
+    // including the gross scalar load when collocated sources cancel in water.
+    const auto record = [&](bool corrected) {
+        if (!audit) return;
+        audit->horizontal.assign(mesh.cellCount(), 0.0);
+        audit->vertical.assign(mesh.cellCount(), 0.0);
+        audit->sources.assign(mesh.cellCount(), 0.0);
+        audit->interfaceFlux = m_lowVertical;
+        if (corrected)
+            for (size_t i = 0; i < audit->interfaceFlux.size(); ++i)
+                audit->interfaceFlux[i] += m_antiVertical[i];
+        const auto &horizontal = mesh.horizontal();
+        const auto &offsets = horizontal.faceEdgeOffsets();
+        const auto &edges = horizontal.faceEdges();
+        const auto &left = horizontal.edgeLeftFace();
+        for (int64_t c = 0; c < mesh.columnCount(); ++c)
+            for (int k = 0; k < mesh.layerCount(); ++k) {
+                const size_t cell = mesh.cell(c, k);
+                double outward = 0.0;
+                for (int64_t i = offsets[c]; i < offsets[c+1]; ++i) {
+                    const size_t e = edges[i], slot = e * mesh.layerCount() + k;
+                    outward += (left[e] == c ? 1.0 : -1.0) *
+                        (m_lowHorizontal[slot] + (corrected ? m_antiHorizontal[slot] : 0.0));
+                }
+                audit->horizontal[cell] = -dt * outward;
+                audit->vertical[cell] = dt *
+                    (audit->interfaceFlux[mesh.interfaceSlot(c,k+1)] -
+                     audit->interfaceFlux[mesh.interfaceSlot(c,k)]);
+                if (!scalarLoad.empty()) audit->sources[cell] = dt * scalarLoad[cell];
+                else if (!cellSource.empty()) audit->sources[cell] = dt * cellSource[cell] *
+                    (cellSource[cell] > 0 ? sourceValue[cell] : values[cell]);
+            }
+    };
+
     if (scheme == AdvectionScheme::Upwind)
     {
+        record(false);
         applyDivergence(mesh, oldVolume, m_lowHorizontal, m_lowVertical, cellSource,
-                        sourceValue, dt, values, m_lowValues);
+                        sourceValue, dt, values, m_lowValues, scalarLoad);
 
         std::copy(m_lowValues.begin(), m_lowValues.end(), values.begin());
         m_admittedFraction = 0.0;
@@ -591,7 +630,7 @@ void EulerianTransport::advect(const Mesh::LayeredMesh &mesh,
     // The monotone solution, which both bounds the answer and anchors the
     // correction.
     applyDivergence(mesh, oldVolume, m_lowHorizontal, m_lowVertical, cellSource,
-                    sourceValue, dt, values, m_lowValues);
+                    sourceValue, dt, values, m_lowValues, scalarLoad);
 
     computeGradients(mesh, values);
     computeHighOrderFluxes(mesh, edgeLayerFlux, verticalFlux, values);
@@ -603,6 +642,7 @@ void EulerianTransport::advect(const Mesh::LayeredMesh &mesh,
         m_antiVertical[i] = m_highVertical[i] - m_lowVertical[i];
 
     limitAntidiffusiveFluxes(mesh, values, m_lowValues, dt);
+    record(true);
 
     // Apply the admitted correction to the monotone solution. The volumes
     // here are the *new* ones on both sides, because the correction is a pure

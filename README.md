@@ -7,7 +7,7 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=c%2B%2B&logoColor=white)](https://en.cppreference.com/w/cpp/20)
 [![CMake](https://img.shields.io/badge/build-CMake%203.21%2B-064F8C.svg?logo=cmake&logoColor=white)](CMakeLists.txt)
 [![C API](https://img.shields.io/badge/C%20API-C89--clean-555555.svg)](include/fvqual/capi/)
-[![Python bindings](https://img.shields.io/badge/Python%20bindings-planned-lightgrey.svg)](python/)
+[![Python bindings](https://img.shields.io/badge/Python-C%20ABI%20bindings-555555.svg)](python/)
 
 **A fully 3D, unstructured, finite-volume hydrodynamic and water-quality model —
 the HydroCouple-native successor to CE-QUAL-W2.**
@@ -23,10 +23,23 @@ OpenSWMM networks, groundwater, and stream-temperature components.
 > hydrostatic internal mode, MUSCL + FCT scalar transport, and reservoir
 > operations — inflows and withdrawals with selective withdrawal, rating-curve
 > structures, multi-port outlet blending, and internal transfers. Shared-memory
-> threading is in place behind `FVQual_USE_OPENMP`. **Not yet implemented:**
-> water-quality kinetics, GPU acceleration, and the HydroCouple component.
-> `CHANGELOG.md` records measured accuracy and known limitations. A public
-> C API (`include/fvqual/capi/`) is the foundation for Python bindings.
+> threading is in place behind `FVQual_USE_OPENMP`. Reaction kinetics, a
+> HydroCouple ABI 4 component, conservative interval inflows, complete
+> in-memory checkpoints and Python C ABI bindings are implemented. Native
+> mixed SWMM meshes can be imported without splitting quads. The worked
+> [SWMM reservoir example](examples/swmm_reservoir/) includes recorded forcing,
+> a live one-way surface-boundary bridge, native 1D SWMM outfall coupling and
+> uncertainty experiments. The native CPU coupling is qualified through
+> Composer on synthetic heat/species cases and a six-hour Bellinge event;
+> its receiving basin and Bellinge inlet temperature are explicitly synthetic.
+> [Scheduled reservoir operations](examples/reservoir_operations/) provide
+> contextual Basic/Advanced editors, shared component/C API configuration,
+> process-resolved water/heat/species budgets, scalar ledger plots, recorded
+> layer prisms and transects. A worked mixed-mesh case qualifies CLI/Composer
+> parity and independent irregular-schedule budgets.
+> GPU execution, hydraulic feedback, coordinated durable restart and full
+> solver derivatives remain unqualified. `CHANGELOG.md` records scientific
+> accuracy and known limitations; a short DeGray run is not field validation.
 
 ## Why
 
@@ -126,11 +139,19 @@ regenerate it from the solver with `fvqual-verify`.
 
 ## Roadmap
 
-Phases 0-3, the Eulerian transport engine (F5.1), and reservoir sources
-including selective withdrawal are implemented. Next: rating-curve structures
-(weirs, gates, pumps), Phase 6 (kinetics, reusing
-OpenSWMM's MSX engine), Phase 7 (Kokkos), Phase 8 (HydroCouple component and
-the CE-QUAL-W2 validation release).
+The CPU hydro, transport, heat, reservoir structures, reaction kinetics and
+HydroCouple component pathways are implemented. Current qualification focuses
+on imported mesh geometry and numerical convergence, richer component
+configuration and outputs, SWMM wrappers and scheduling, DeGray thermal
+validation, and installation packaging. Python ensembles and central finite
+differences are available. Analytic JVP/VJP covers reference kernels and actual
+passive upwind transport/vertical diffusion on recorded hydraulic trajectories;
+the controlled-column path also supports thermal/mixing/wind feedback, depth/area
+scaling, changing-depth observations and blocked adjoint replay. Native nonlinear
+multispecies kinetics and conditional species derivatives now integrate with the
+SDK differentiable workflow and its logarithmic replay. General reservoir
+thermal/momentum, settling and geometry derivatives remain unqualified. GPU work and full coupled derivatives
+need their own verification evidence.
 Verification gates and known limitations are recorded in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -146,9 +167,8 @@ and documentation conventions as its siblings:
   FVQual builds on for the data plane, component lifecycle, and mesh IO
   ([API docs](https://hydrocouple.github.io/HydroCoupleSDK/)).
 - **[openswmm.engine](https://github.com/HydroCouple/openswmm.engine)** — the
-  SWMM engine whose C-API-plus-Cython binding structure the FVQual Python
-  bindings follow, and whose multispecies reaction engine FVQual will reuse for
-  water-quality kinetics
+  SWMM engine whose public C API supplies the optional live surface-boundary
+  bridge and whose MSX-convention reaction kernels informed FVQual kinetics
   ([Python docs](https://hydrocouple.github.io/openswmm.engine/)).
 
 ## License

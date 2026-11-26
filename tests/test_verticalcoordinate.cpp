@@ -155,14 +155,13 @@ TEST(VerticalCoordinate, BulkAccessorAgreesWithThePerInterfaceOne)
 
     // Two ways to ask one question is two chances to answer differently, and a
     // remap driven by the bulk path would inherit the discrepancy in silence.
-    std::vector<double> bulk(static_cast<size_t>(kLayers) + 1, 0.0);
+    const auto bulk = vertical.interfaceElevations();
 
     for (int64_t c = 0; c < basin.layered.columnCount(); ++c)
     {
-        vertical.interfaceElevations(c, bulk.data());
         for (int k = 0; k <= kLayers; ++k)
         {
-            ASSERT_DOUBLE_EQ(bulk[static_cast<size_t>(k)],
+            ASSERT_DOUBLE_EQ(bulk[static_cast<size_t>(basin.layered.interfaceSlot(c, k))],
                              vertical.interfaceElevation(c, k))
                 << "column " << c << " interface " << k;
         }
@@ -199,10 +198,7 @@ TEST(VerticalCoordinate, AnOutOfRangeIndexIsUnmistakableRatherThanPlausible)
     EXPECT_TRUE(std::isnan(vertical.interfaceElevation(0, -1)));
     EXPECT_TRUE(std::isnan(vertical.interfaceElevation(0, kLayers + 1)));
 
-    std::vector<double> bulk(static_cast<size_t>(kLayers) + 1, 0.0);
-    vertical.interfaceElevations(-1, bulk.data());
-    EXPECT_TRUE(std::isnan(bulk.front()));
-    EXPECT_TRUE(std::isnan(bulk.back()));
+
 }
 
 TEST(VerticalCoordinate, ElevationsAreTheMeshsOwnAndNotARederivationFromSigma)
@@ -306,4 +302,28 @@ TEST(VerticalCoordinate, LayerThicknessesSumToTheWaterColumnDepth)
 
         EXPECT_NEAR(sum, kStage - basin.bed(c), 1.0e-10) << "column " << c;
     }
+}
+
+TEST(VerticalCoordinate, EpochAndBulkViewsFollowGeometryAndRebinding)
+{
+    Basin basin;
+    ASSERT_NO_FATAL_FAILURE(makeBasin(basin));
+    SigmaVerticalCoordinate coordinate(basin.layered);
+    EXPECT_EQ(coordinate.columnCount(), basin.layered.columnCount());
+    EXPECT_EQ(coordinate.interfaceElevations().size(),
+              static_cast<size_t>(basin.layered.interfaceSlotCount()));
+    auto epoch = coordinate.geometryEpoch();
+    std::vector<double> surface(static_cast<size_t>(basin.layered.columnCount()), 1.0);
+    std::string message;
+    ASSERT_TRUE(basin.layered.updateSurface(surface, message)) << message;
+    EXPECT_GT(coordinate.geometryEpoch(), epoch);
+    EXPECT_DOUBLE_EQ(coordinate.interfaceElevations().front(), 1.0);
+    epoch = coordinate.geometryEpoch();
+    ASSERT_FALSE(basin.layered.updateSurface({}, message));
+    EXPECT_EQ(coordinate.geometryEpoch(), epoch);
+    FVQual::Mesh::LayeredMesh replacement;
+    coordinate.refresh(replacement);
+    EXPECT_GT(coordinate.geometryEpoch(), epoch);
+    EXPECT_EQ(coordinate.columnCount(), 0);
+    EXPECT_TRUE(coordinate.interfaceElevations().empty());
 }

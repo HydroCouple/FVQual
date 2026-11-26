@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "hydrocouplesdk/componentabi.h"
+#include "hydrocouplesdk/differentiation/differentials.h"
 
 #include <dlfcn.h>
 
@@ -29,6 +30,32 @@ std::filesystem::path pluginPath()
 }
 
 } // namespace
+
+TEST(FVQualPluginTest, ConditionalDifferentiationCrossesThePluginBoundary) {
+    void *handle=dlopen(pluginPath().c_str(),RTLD_NOW|RTLD_LOCAL);ASSERT_NE(handle,nullptr)<<dlerror();
+    const auto info=reinterpret_cast<HydroCoupleComponentInfoFn>(dlsym(handle,HYDROCOUPLE_COMPONENT_INFO_SYMBOL));ASSERT_NE(info,nullptr);
+    auto *modelInfo=dynamic_cast<HydroCouple::IModelComponentInfo *>(info());ASSERT_NE(modelInfo,nullptr);
+    {
+        auto component=modelInfo->createComponentInstance();std::string message;
+        const auto assign=[&](const char *id,const std::string &text){
+            for(auto *a:component->arguments())if(a->id()==id){EXPECT_TRUE(a->initialize(text,HydroCouple::IArgument::ArgumentInputType::JSON,message))<<message;return;}
+            FAIL()<<"missing argument "<<id;
+        };
+        EXPECT_FALSE(component->capabilities().count(HydroCouple::Capability::Differentiable));
+        assign("geometry_counts","[2,2]");assign("geometry_values","[20,10,5,12,1,2]");
+        assign("conservative_species","{\"tracer\":0.002}");assign("conditional_species_derivatives","[1]");
+        component->initialize();component->prepare();ASSERT_NE(component->status(),HydroCouple::IModelComponent::ComponentStatus::Failed);
+        auto *d=dynamic_cast<HydroCouple::IDifferentiableModelComponent *>(component.get());ASSERT_NE(d,nullptr);
+        EXPECT_TRUE(component->capabilities().count(HydroCouple::Capability::Differentiable));ASSERT_EQ(d->differentiableOutputs().size(),1u);
+        EXPECT_TRUE(d->differentiableArguments().empty());component->update();auto *item=d->differentiableOutputs()[0];
+        const auto shape=item->shape();std::vector<double> direction(4,1),result(4,0);
+        const HydroCouple::DifferentialEntry seed{item,HydroCouple::DifferentialRole::StateBefore,HydroCouple::SDK::Differentiation::hostBuffer(direction,shape)};
+        const HydroCouple::DifferentialEntry output{item,HydroCouple::DifferentialRole::Output,HydroCouple::SDK::Differentiation::hostBuffer(result,shape)};
+        ASSERT_TRUE(d->jvp({&seed,1},{&output,1},&message))<<message;for(double value:result)EXPECT_NEAR(value,1,2e-14);
+        component->finish();
+    }
+    dlclose(handle);
+}
 
 TEST(FVQualPluginTest, LoadsThroughTheStampedConventionAndRunsItsDefaults)
 {
@@ -59,9 +86,9 @@ TEST(FVQualPluginTest, LoadsThroughTheStampedConventionAndRunsItsDefaults)
         ASSERT_EQ(component->status(), Status::Initialized);
 
         // The ports a composition wires: the met input, the field output.
-        ASSERT_EQ(component->inputs().size(), 1u);
+        ASSERT_EQ(component->inputs().size(), 2u);
         EXPECT_EQ(component->inputs()[0]->id(), "air_temperature");
-        ASSERT_EQ(component->outputs().size(), 1u);
+        ASSERT_GE(component->outputs().size(), 10u);
         EXPECT_EQ(component->outputs()[0]->id(), "temperature");
 
         // The default rectangular basin must run — the contract that lets

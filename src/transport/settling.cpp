@@ -132,6 +132,32 @@ void SettlingSet::apply(const Mesh::LayeredMesh &mesh, State::StateStore &state,
         FVQual_PARALLEL_FOR_REDUCE(+ : delivered)
         for (int64_t c = 0; c < columns; ++c)
         {
+            if (mesh.hasHypsography())
+            {
+                // A settling particle crosses the lower interface or strikes
+                // the projected banks. Store both in the column's aggregate
+                // bed inventory, whose declared areal basis is the plan polygon.
+                double incoming = 0.0, bedAmount = 0.0;
+                for (int k = 0; k < layers; ++k)
+                {
+                    const size_t cell = static_cast<size_t>(mesh.cell(c, k));
+                    const double volume = mesh.cellVolume()[cell];
+                    if (!(volume > 0.0)) continue;
+                    const double top = mesh.interfaceArea()[mesh.interfaceSlot(c, k)];
+                    const double bottom = mesh.interfaceArea()[mesh.interfaceSlot(c, k+1)];
+                    const double updated = (volume * state.speciesAt(s, cell) + incoming)
+                                         / (volume + wdt * top);
+                    state.speciesAt(s, cell) = updated;
+                    incoming = wdt * bottom * updated;
+                    bedAmount += wdt * (top-bottom) * updated;
+                }
+                bedAmount += incoming;
+                delivered += bedAmount;
+                if (receiver >= 0)
+                    state.speciesAt(receiver, mesh.cell(c, layers-1)) += bedAmount / area[static_cast<size_t>(c)];
+                continue;
+            }
+
             // Forward substitution from the surface down. Layer 0 is the
             // surface, and nothing settles in from above it, so the first row
             // has no coupling and the sweep needs no starting value.

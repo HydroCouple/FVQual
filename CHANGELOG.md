@@ -6,6 +6,183 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — native reactive derivatives and SDK workflow integration
+
+Multispecies native upwind transport and implicit vertical diffusion now chain
+through nonlinear adaptive Cash-Karp reactions. The local analytic tape follows
+the accepted adaptive controller, including changing internal step lengths;
+expression domains and switching/scaling boundaries refuse local derivatives.
+Species/constant products pass independent native epsilon sweeps, scoped
+area/volume and decay oracles, adjoint identities, replay and atomic-buffer gates.
+
+FVQualComponent implements the HydroCouple differentiation contract under an
+explicit `conditional_species_derivatives` opt-in. It lists supported species
+states/outputs and `reaction_constants` arguments, with hydraulic/thermal
+trajectories, geometry, Kz and inflows prescribed. Unsupported configurations
+refuse preparation. Default components retain their existing capabilities and
+transport scheme. SDK every-step and logarithmic reverse workflows qualify
+actual native Bellinge runs; the C89-clean C API and Python provide owned traces.
+
+The review includes correlated parameter covariance, full native ensembles,
+observation/mapping transposes, optional whitened sensitivity diagnostics and a
+synthetic local Gaussian observation update with withheld native evaluation.
+The example retains a worse withheld error after the noisy observation update;
+it does not claim calibration success. Full reservoir thermal/momentum,
+settling and general geometry derivatives, DeGray field acceptance and CPU
+installation qualification remain open.
+
+### Added — combined thermal, geometry and adjoint replay review
+
+Controlled native thermal-column experiments now provide analytic discrete
+JVP/VJP for initial temperature/shear and eighteen meteorological, mixing,
+optical, heat-capacity and geometry-scale parameters. Shared production kernels
+retain temperature/density/Richardson/wind feedback. Depth sampling includes
+changing interpolation weights and their transpose. Blocked reverse replay
+qualifies the same gradients with fewer stored states; one local step tape is
+rebuilt at a time. The C89-clean C API and owned Python interface expose the
+qualified configuration and refuse unsupported physics and branch boundaries.
+
+Independent native solver differences, adjoint identities, two-box/energy
+oracles, replay-policy equivalence and a deliberate missing-observation-weight
+mutation qualify the restricted path. The combined review contains 256 native
+thermal-column samples and 256 full Bellinge receiver samples. Bellinge thermal
+sensitivities remain explicitly finite-difference references; the full
+horizontal thermal-reservoir adjoint remains open; the conditional species SDK
+path is described above.
+The column excludes bed friction, Coriolis, sources, horizontal circulation,
+salinity, kinetics and settling. DeGray field accuracy is not accepted by this
+derivative increment.
+
+The Bellinge mesh qualification now compares independently read source record
+counts and every terrain coordinate, supporting regenerated meshes while
+preserving prior review artifacts. A failed SWMM library load no longer raises
+a second error during donor destruction. The current SWMM library path is
+qualified with the live Python bridge.
+
+### Added — restricted actual-solver scalar derivatives
+
+An opt-in passive-scalar recorder captures production upwind advection, gross
+inflow/withdrawal contributions and the implicit vertical diffusion systems.
+Analytic multi-step JVP/VJP includes initial concentrations, per-step source
+concentrations and a recorded diffusion multiplier. Unequal-volume column
+solves use the true transpose. Immutable histories share completed records
+across in-memory solver checkpoints and owned C/Python trace handles. Fixed
+observation/unit mappings provide tangent and transpose actions, with local
+covariance propagation from explicit correlated uncertainty modes.
+
+Qualification includes independent full solver finite-difference sweeps,
+two-box analytic and tangent conservation oracles, mapping dot tests, deliberate
+mapping-sign mutation, deterministic checkpoint replay and atomic ABI failures.
+The Bellinge review uses recorded water/heat and synthetic tracer/receiver
+geometry; 512 actual whole-run samples match the supported tangent predictions.
+Separate column experiments measure gradient refinement and nonlinear
+diffusivity uncertainty. Native GUI review verifies graphical selection,
+context plotting, wheel zoom, playback and CSV/figure exports.
+
+This is a restricted CPU scalar path with hydraulic geometry, placement, Kz
+trajectory and schedule frozen. Temperature/salinity/age, MUSCL, horizontal
+diffusion, reactions, settling, internal transfers and open boundaries are
+refused. Thermal feedback, geometry derivatives, logarithmic adjoint replay,
+SDK differentiable-component integration and SWMM parameter gradients remain
+open. A 32-layer nominally uniform-temperature diagnostic changes mixing
+branches under perturbation and demonstrates why a frozen Kz derivative cannot
+stand for thermal feedback. DeGray field accuracy remains unaccepted. See the
+phase 6a section of `verification/degray/README.md`.
+
+### Added — heat-transport diagnosis
+
+An opt-in solver audit records the admitted horizontal/vertical advection,
+gross source loads, diffusion, surface exchange and other thermal processes
+per moving cell, plus cumulative upward interface heat transport. Checkpoints
+retain the ledger. It observes the existing numerical operators without
+changing their solution. The DeGray driver enables it with
+`FVQUAL_HEAT_AUDIT=1` and saves velocity, diffusivity and baroclinic acceleration
+snapshots with each daily report. Review tools independently close the saved
+cell/interface ledgers and expose the fields in Composer with physical units.
+
+Registered spring comparisons narrow the excess deep warming to wind-driven
+advective redistribution: warming persists with reduced shear mixing and with
+the prescribed inflow/withdrawal removed. This diagnosis does not establish
+pressure/conveyance causality or accept field accuracy. See the DeGray review
+instructions for scope, artifacts and the next scientific gate.
+
+### Fixed — heat conservation with depth-varying storage areas
+
+Implicit vertical scalar diffusion now uses the shared interface area and each
+cell's actual volume on hypsographic meshes. Prescribed and meteorological heat
+fluxes use the wet surface area; penetrating solar energy uses the difference
+between incoming and outgoing power at the layer interfaces. Radiation
+intercepted by the sloping bed follows the existing immediate absorption policy.
+The constant-area path retains its previous arithmetic.
+
+Settling on a hypsographic column transfers mass across its actual interfaces
+and collects projected-bank interception in the aggregate bed store. Scoped
+water reactions use interface area / volume; benthic inventory rates keep
+their areal units and act only at the bed. Surface-scoped benthic rates are
+refused. The aggregate sediment store uses its declared plan-polygon area;
+distributed bank chemistry remains outside this representation.
+
+Independent two-box diffusion and surface-energy checks reproduce analytical
+finite-volume balances. Seasonal runs made before this correction are retained
+as superseded evidence: their heat residual reached 24.5% of inventory and their
+temperature errors cannot establish scientific accuracy. Corrected seasonal
+comparisons and field acceptance are separate review gates.
+
+### Added — registered DeGray science review and gross exchange stability
+
+The DeGray driver records initial state, exact reporting/forcing endpoints,
+full process ledgers and independent water/source-heat audits. A registered
+seasonal workflow separates development dates from retrospectively reserved
+autumn casts, refuses observation extrapolation, records input/binary hashes,
+and compares timestep, vertical grid, inferred lateral geometry and outlet/
+wind diagnostics. Scientific figures and native Composer run artifacts retain
+physical dates and moving layer interfaces; this is not field acceptance.
+
+Gross cell withdrawal now limits internal steps even when simultaneous inflow
+makes net water discharge zero. Direct steps and newly activated pumps split
+at that limit; head-dependent structures and boundaries can roll back and
+retry excessive mean withdrawal using replay checkpoints. Analytical tank
+checks verify positivity, independent mass closure and first-order refinement.
+
+### Added — reservoir operation authoring and process budgets
+
+Shared validated JSON configuration exposes meteorology, sources, rating-curve
+structures, release groups, open boundaries, internal transfers and inline
+reaction decks through the component and C API. Schedules hold values on an
+elapsed-second clock and split steps at irregular knots. Composer Basic mode
+has contextual operation and SWMM outfall-mapping editors; Advanced retains
+the serialized payload. Recorded scalar ledgers can be plotted/exported;
+layered results support selected-layer prisms and full-depth transects.
+
+The cumulative ledger separates water, heat and species inputs/outputs by
+process, six surface heat terms, settling, reactions and independent inventory
+residuals. Benthic inventories use area. Fixed collocated positive/negative
+source rates losing their separate scalar loads when water rates cancel.
+Receiver checkpoint replay preserves operation schedules and complete budgets.
+The mixed-mesh operations example compares 3,384 CLI/Composer values exactly
+and independently integrates irregular controls. Its maximum water residual
+is 2.2e-12 m³ and heat residual 0.002 J. The Bellinge live/replay qualification
+now compares 1,800 reservoir values exactly, including the new ledger.
+Scientific field acceptance and actual-solver derivatives remain open.
+
+### Added — acknowledged native SWMM outfall coupling
+
+FVQual accepts live, already-debited interval amounts on `integrated_inflows`
+and publishes `accepted_transfer_id` after an atomic receiver application.
+Configuration rejects simultaneous live and recorded forcing and mismatched
+epochs/horizons. Receiver checkpoints retain their acknowledgment and transfer
+ledger; this does not provide coordinated durable SWMM/FVQual restart.
+
+The optional native OpenSWMM component uses cumulative public engine receipts
+and explicit conservative object-to-column mapping. Actual Composer execution,
+an independent native API run and recorded replay qualify a synthetic native
+heat/species case and a six-hour Bellinge runoff/network event. Nine outfalls
+deliver 12,162.107480 m³; all 1,160 Bellinge recorded values match replay exactly.
+The receiving basin, mapping and 18 °C inlet temperature are synthetic.
+Reversal, count-based species, unqualified quality engines, adapted packets
+and multiple receiving components are refused. Details and visual review
+instructions are in `examples/swmm_reservoir/README.md`.
+
 ### Fixed — the evaporative wind function was driven at the wrong reference height
 
 CE-QUAL-W2 carries two winds from one measurement, through the logarithmic

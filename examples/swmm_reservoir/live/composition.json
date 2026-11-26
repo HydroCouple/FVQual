@@ -1,0 +1,92 @@
+{
+  "schema_version": "1.1",
+  "metadata": {
+    "id": "live-swmm-reservoir",
+    "caption": "Native SWMM outfall \u2192 mixed-mesh reservoir \u2014 synthetic qualification"
+  },
+  "components": [
+    {
+      "id": "openswmm",
+      "info": {
+        "component_info_id": "openswmm.model"
+      },
+      "arguments": {
+        "configuration": {
+          "@uri": "configuration.json"
+        }
+      }
+    },
+    {
+      "id": "reservoir",
+      "info": {
+        "component_info_id": "fvqual.component"
+      },
+      "arguments": {
+        "geometry_counts": {
+          "values": [
+            3,
+            3
+          ]
+        },
+        "geometry_values": {
+          "values": [
+            20,
+            10,
+            5,
+            10,
+            7,
+            120
+          ]
+        },
+        "mesh": {
+          "@uri": "../reservoir.mesh.json"
+        },
+        "epoch_julian_day": {
+          "values": [
+            2461041.5
+          ]
+        },
+        "initial_temperature_c": {
+          "values": [
+            22,
+            16,
+            12
+          ]
+        },
+        "conservative_species": {
+          "tracer": 0.002,
+          "second_tracer": 0.002
+        },
+        "maximum_time_step_s": {
+          "values": [
+            0.5
+          ]
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "component": "openswmm",
+        "output": "outfall_transfers"
+      },
+      "to": {
+        "component": "reservoir",
+        "input": "integrated_inflows"
+      }
+    }
+  ],
+  "workflow": {
+    "strategy": "time_stepped"
+  },
+  "writers": [
+    {
+      "type": "csv",
+      "path": "live_output/fields.csv"
+    }
+  ],
+  "run": {
+    "manifest": "live_output/run.json"
+  }
+}

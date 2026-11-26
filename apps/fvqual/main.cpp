@@ -13,6 +13,7 @@
  */
 
 #include "fvqual/io/ugridreader.h"
+#include "hydrocouplesdk/io/meshpackage.h"
 #include "fvqual/mesh/layeredmesh.h"
 #include "fvqual/state/statestore.h"
 #include "fvqual/version.h"
@@ -24,6 +25,8 @@
 #include <string_view>
 
 int runCompositionCommand(int argc, char **argv);
+int importMeshCommand(int argc, char **argv);
+int inspectMeshCommand(int argc, char **argv);
 
 namespace {
 
@@ -39,6 +42,8 @@ void printUsage()
         << "3D unstructured finite-volume hydrodynamic and water-quality model\n\n"
         << "Usage:\n"
         << "  fvqual mesh <mesh.nc> [options]   Inspect a UGRID mesh and its sigma grid\n"
+        << "  fvqual import-mesh <input> <output.mesh.json> [metadata options]\n"
+        << "  fvqual inspect-mesh <package.mesh.json> [--report <new report.json>]\n"
         << "  fvqual run <composition.json>     Run a composition, recording a manifest\n"
         << "  fvqual version                    Print the version\n"
         << "  fvqual help                       Print this message\n\n"
@@ -150,7 +155,18 @@ int runMeshCommand(int argc, char **argv)
     HydroCouple::SDK::IO::MeshDefinition definition;
     std::string                          message;
 
-    if (!UgridReader::read(path, meshName, definition, message))
+    const bool isPackage = std::filesystem::path(path).extension() == ".json";
+    HydroCouple::SDK::IO::MeshPackage package;
+    bool read = isPackage ? HydroCouple::SDK::IO::readMeshPackage(path, package, message)
+                          : UgridReader::read(path, meshName, definition, message);
+    if (isPackage && read) {
+        definition = package.mesh;
+        if (package.elevationKind != "bed-elevation") {
+            message = "reservoir sigma extrusion requires declared bed elevations";
+            read = false;
+        }
+    }
+    if (!read)
     {
         std::cerr << "error: " << message << "\n";
         return EXIT_FAILURE;
@@ -217,6 +233,12 @@ int main(int argc, char **argv)
         std::cout << FVQual_FULL_VERSION << "\n";
         return EXIT_SUCCESS;
     }
+
+    if (command == "import-mesh")
+        return importMeshCommand(argc, argv);
+
+    if (command == "inspect-mesh")
+        return inspectMeshCommand(argc, argv);
 
     if (command == "mesh")
         return runMeshCommand(argc, argv);

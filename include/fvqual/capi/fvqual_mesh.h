@@ -78,6 +78,12 @@ FVQual_CAPI FVQ_ErrorCode fvq_mesh_create_channel(int columns, double length, do
 FVQual_CAPI FVQ_ErrorCode fvq_mesh_read_ugrid(const char *path, const char *meshName,
                                               FVQ_Mesh **out);
 
+/*! Reads a versioned SI mesh package with declared bed elevations.
+ * Terrain elevations and unapplied non-wall boundaries are refused.
+ * Initial depth and roughness are carried into simulations created from it.
+ */
+FVQual_CAPI FVQ_ErrorCode fvq_mesh_read_package(const char *path, FVQ_Mesh **out);
+
 /*!
  * \brief Releases a mesh. Passing NULL is a no-op.
  */

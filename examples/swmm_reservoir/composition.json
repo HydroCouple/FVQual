@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.1",
+  "metadata": {
+    "id": "recorded-swmm-reservoir",
+    "caption": "Mixed-mesh reservoir with accepted SWMM inflows"
+  },
+  "components": [
+    {
+      "id": "reservoir",
+      "info": { "component_info_id": "fvqual.component" },
+      "arguments": {
+        "geometry_counts": {
+          "values": [
+            3,
+            4
+          ]
+        },
+        "geometry_values": {
+          "values": [
+            20,
+            10,
+            5,
+            10,
+            1,
+            4
+          ]
+        },
+        "mesh": {
+          "@uri": "reservoir.mesh.json"
+        },
+        "recorded_inflows": {
+          "@uri": "inflow_series.json"
+        }
+      }
+    }
+  ],
+  "workflow": {
+    "strategy": "time_stepped"
+  },
+  "writers": [
+    {
+      "type": "csv",
+      "path": "output/reservoir.csv"
+    }
+  ],
+  "run": {
+    "manifest": "output/run.json"
+  }
+}

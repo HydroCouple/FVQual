@@ -31,6 +31,7 @@ int TransferSet::add(const Transfer &transfer, SourceSet &sources, std::string &
     }
 
     Source intake;
+    intake.origin = SourceOrigin::InternalTransfer;
     intake.id          = transfer.id + " intake";
     intake.column      = transfer.fromColumn;
     intake.discharge   = -transfer.discharge;
@@ -44,6 +45,7 @@ int TransferSet::add(const Transfer &transfer, SourceSet &sources, std::string &
         return -1;
 
     Source outfall;
+    outfall.origin = SourceOrigin::InternalTransfer;
     outfall.id        = transfer.id + " outfall";
     outfall.column    = transfer.toColumn;
     outfall.discharge = transfer.discharge;

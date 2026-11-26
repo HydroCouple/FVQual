@@ -1,0 +1,12 @@
+; Synthetic conservative conversion; not a field chemistry calibration.
+[SPECIES]
+A kg/m3 0.0002
+B kg/m3 0.00005
+
+[CONSTANTS]
+k 0.00002
+cref 0.001
+
+[RATES]
+A WATER -k*A*(1+B/cref)
+B WATER k*A*(1+B/cref)

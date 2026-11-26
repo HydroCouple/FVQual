@@ -5,12 +5,7 @@ Mirrors the openswmm.engine documentation setup — pydata theme, MyST, design
 grids, intersphinx — so the two sites read the same way and can link to each
 other without a reader noticing a seam.
 
-**Status.** The compiled ``fvqual`` package does not exist yet; the C API it
-will bind is in ``include/fvqual/capi/``. Nothing here uses ``autodoc`` against
-a module that is not built, because a documentation site whose build depends on
-a package that has not been written is a site that is red from the first day
-and stays that way. When the extension lands, add ``autodoc`` and the API pages
-alongside these.
+The Python reference is generated from the ctypes bindings in python/fvqual.
 """
 
 project = "FVQual"
@@ -18,6 +13,8 @@ author = "Caleb Buahin"
 copyright = "2026, Caleb Buahin"
 
 extensions = [
+    "sphinx.ext.viewcode",
+    "autoapi.extension",
     "myst_parser",
     "sphinx.ext.intersphinx",
     "sphinx.ext.extlinks",
@@ -64,6 +61,11 @@ html_theme_options = {
 
 myst_enable_extensions = ["colon_fence", "deflist"]
 
+# Parse the source tree so optional engines and services need not run during a docs build.
+autoapi_dirs = ['../fvqual']
+autoapi_options = ["members", "undoc-members", "show-module-summary"]
+autoapi_add_toctree_entry = False
+
 
 # -- HydroCouple documentation theme ---------------------------------------
 import os  # noqa: E402
@@ -80,11 +82,12 @@ hydrocouple_theme.configure(
     hero={
         "kicker": "FVQual · Python",
         "title": "Drive FVQual from a script",
-        "lede": "The planned Python interface opens, steps and inspects FVQual's three-dimensional "
-                "hydrodynamic and water-quality simulations through its C API; these pages hold "
-                "its design.",
+        "lede": "The fvqual package opens, steps and inspects FVQual's three-dimensional "
+                "hydrodynamic and water-quality simulations through its C API, using "
+                "standard-library ctypes.",
         "actions": [
             {"label": "Read the design", "url": "design", "style": "solid"},
+            {"label": "API reference", "url": "api", "style": "ghost"},
             {"label": "C++ reference", "url": "https://www.hydrocouple.org/FVQual/", "style": "ghost"},
         ],
     },

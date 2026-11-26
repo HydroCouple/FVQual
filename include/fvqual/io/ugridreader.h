@@ -8,7 +8,7 @@
  * \brief  UgridReader — reads a UGRID-1.0 two-dimensional mesh from a
  *         NetCDF-4 file (F1.2).
  *
- * The SDK ships UGRID writers but no reader; FVQual needs one because a mesh
+ * FVQual delegates topology and connectivity validation to the SDK reader. A mesh
  * produced by any UGRID-aware tool (the SDK's own meshers, Delft3D-FM's grid
  * editor, QGIS plug-ins, xugrid) is the intended way to define a domain.
  *
@@ -47,9 +47,8 @@ public:
      * \brief Reads the first (or a named) 2-D mesh topology from a file.
      *
      * Node z values are taken from a variable named in the topology's
-     * optional `node_z` / `node_elevation` attribute, or from a variable
-     * carrying `standard_name = "sea_floor_depth_below_geoid"` (negated, so
-     * the result is an elevation, positive up). Absent any of these, node
+     * optional `node_z` / `node_elevation` attribute, or a third coordinate.
+     * Elevations are positive up. Absent any declared elevation, node
      * elevations are left empty and the caller must supply bathymetry.
      *
      * \param[in]  path     NetCDF-4 file to read.

@@ -34,7 +34,11 @@
  *   that overshoots produces a negative particulate, which the kinetics will
  *   then turn into nonsense.
  * - **Exact conservation.** What leaves the water column telescopes to
- *   `w dt C_bed`, which is precisely what is handed to the bed.
+ *   the material handed to the bed. For a prism this is `w dt C_bed` per
+ *   unit area. Depth-varying storage also intercepts particles on projected
+ *   banks; bank and bottom deposition share the column's aggregate bed store,
+ *   expressed per unit plan-polygon area. Bank-specific sediment compartments
+ *   and sloped-bed reaction exposure are not represented by that aggregate.
  *
  * The cost is numerical diffusion: first-order upwind in an implicit form is
  * more diffusive than the same scheme explicit. For a process whose velocity is

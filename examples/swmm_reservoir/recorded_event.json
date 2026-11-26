@@ -1,0 +1,135 @@
+{
+  "schema": "fvqual.recorded-inflows/1.0",
+  "units": {
+    "time": "elapsed_s",
+    "water": "m3",
+    "heat": "J_relative_to_0_degC",
+    "species": "kg"
+  },
+  "epoch_utc": "2026-01-01T00:00:00Z",
+  "source": "Synthetic integrated donor exports; not a measured SWMM event",
+  "mesh": {
+    "units": "m",
+    "elevation_kind": "bed-elevation",
+    "vertical_datum": "synthetic-bed",
+    "x": [
+      0,
+      10,
+      10,
+      0,
+      20,
+      20
+    ],
+    "y": [
+      0,
+      0,
+      10,
+      10,
+      0,
+      10
+    ],
+    "z": [
+      -5,
+      -5,
+      -5,
+      -5,
+      -5,
+      -5
+    ],
+    "offsets": [
+      0,
+      3,
+      6,
+      10
+    ],
+    "nodes": [
+      1,
+      4,
+      2,
+      4,
+      5,
+      2,
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "layers": 4,
+  "temperature_c": 10,
+  "species": {
+    "tracer": {
+      "units": "kg/m3",
+      "initial": 0
+    }
+  },
+  "options": {
+    "maxTimeStep": 0.5
+  },
+  "frames": [
+    {
+      "id": "synthetic-OF1/0",
+      "start_s": 0.0,
+      "end_s": 1.0,
+      "inflows": [
+        {
+          "column": 0,
+          "volume_m3": 0.01,
+          "heat_j": 502320.0,
+          "placement": "surface",
+          "species_mass_kg": {
+            "tracer": 0.002
+          }
+        }
+      ]
+    },
+    {
+      "id": "synthetic-OF1/1",
+      "start_s": 1.0,
+      "end_s": 2.0,
+      "inflows": [
+        {
+          "column": 0,
+          "volume_m3": 0.02,
+          "heat_j": 1004640.0,
+          "placement": "surface",
+          "species_mass_kg": {
+            "tracer": 0.004
+          }
+        }
+      ]
+    },
+    {
+      "id": "synthetic-OF1/2",
+      "start_s": 2.0,
+      "end_s": 3.0,
+      "inflows": [
+        {
+          "column": 0,
+          "volume_m3": 0.03,
+          "heat_j": 1506960.0,
+          "placement": "surface",
+          "species_mass_kg": {
+            "tracer": 0.006
+          }
+        }
+      ]
+    },
+    {
+      "id": "synthetic-OF1/3",
+      "start_s": 3.0,
+      "end_s": 4.0,
+      "inflows": [
+        {
+          "column": 0,
+          "volume_m3": 0.01,
+          "heat_j": 502320.0,
+          "placement": "surface",
+          "species_mass_kg": {
+            "tracer": 0.002
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Caleb Buahin
 
-add_executable(fvqual fvqual/main.cpp fvqual/runcommand.cpp)
+add_executable(fvqual fvqual/main.cpp fvqual/runcommand.cpp fvqual/meshimport.cpp)
 
 target_link_libraries(fvqual PRIVATE FVQual::fvqual_core)
 target_compile_features(fvqual PRIVATE cxx_std_20)

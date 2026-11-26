@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.1",
+  "metadata": {
+    "id": "conditional-reactive-transport",
+    "caption": "Synthetic A to B conversion with conditional species derivatives"
+  },
+  "components": [{
+    "id": "reservoir",
+    "info": {"component_info_id": "fvqual.component"},
+    "arguments": {
+      "geometry_counts": {"values": [2, 3]},
+      "geometry_values": {"values": [20, 10, 5, 12, 1080, 21600]},
+      "maximum_time_step_s": {"values": [300]},
+      "kinetics_file": {"@uri": "reaction.rxn"},
+      "conditional_species_derivatives": {"values": [1]},
+      "reaction_constants": {"k": 0.00002, "cref": 0.001},
+      "sources": {
+        "schema": "fvqual.operations/1.0",
+        "section": "sources",
+        "value": [{
+          "id": "synthetic-inlet", "column": 0, "discharge_m3_s": 0.001,
+          "placement": "surface", "temperature_c": 12,
+          "concentrations": {"A": 0.001, "B": 0}
+        }]
+      }
+    }
+  }],
+  "workflow": {"strategy": "time_stepped"},
+  "writers": [{"type": "csv", "path": "output/fields.csv"}],
+  "run": {"manifest": "output/run.json"}
+}

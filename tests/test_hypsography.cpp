@@ -659,3 +659,164 @@ TEST(Hypsography, TheStageFollowsTheStorageCurveWhenWaterIsAdded)
     EXPECT_GT(std::abs((-20.0 + depth) - naive), 0.05)
         << "the curve made no difference; the gate is vacuous";
 }
+
+// Independent two-box oracle: volumes 160/80 m3, contact area 60 m2,
+// spacing 2 m. Conservative backward Euler diffusion has conductance 3 m3/s.
+TEST(Hypsography, VerticalDiffusionUsesInterfaceAreaAndUnequalCellVolumes) {
+    Column column; ASSERT_NO_FATAL_FAILURE(column.build(2,-4,0));
+    std::string message;
+    ASSERT_TRUE(column.applyCurve({-4,0},{20,100},message)) << message;
+    FVQual::State::SpeciesRegistry registry;
+    ASSERT_GE(registry.addTemperature(10,message),0);
+    FVQual::State::SpeciesDefinition tracer; tracer.id="tracer"; tracer.units="kg/m3";
+    ASSERT_GE(registry.add(tracer,message),0);
+    FVQual::State::StateStore state; state.allocate(column.layered,registry);
+    state.speciesAt(0,0)=20; state.speciesAt(0,1)=10;
+    state.speciesAt(1,0)=0; state.speciesAt(1,1)=3;
+    FVQual::Hydro::InternalModeOptions options; options.neutralViscosity=0;
+    options.backgroundDiffusivity=.1;
+    options.auditHeatTransport=true;
+    FVQual::Hydro::InternalModeSolver solver;
+    ASSERT_TRUE(solver.initialize(column.layered,state,registry,options,message));
+    ASSERT_TRUE(solver.step(10,message)) << message;
+    EXPECT_NEAR(state.speciesAt(1,0),.36,1e-12);
+    EXPECT_NEAR(state.speciesAt(1,1),2.28,1e-12);
+    EXPECT_NEAR(solver.totalSpeciesMass(1),240,1e-10);
+    EXPECT_NEAR(solver.totalSpeciesMass(0),4000,1e-9);
+    EXPECT_NEAR(solver.scalarBudgetResidual(1),0,1e-10);
+    EXPECT_NEAR(solver.scalarBudgetResidual(0),0,1e-9);
+    const auto &audit=solver.heatTransportAudit();
+    const double capacity=1000*4186;
+    // Heat conductance is -30*(T_top-T_bottom) for this ten-second solve.
+    EXPECT_NEAR(audit.upwardDiffusion[1]/capacity,-192,1e-9);
+    EXPECT_NEAR(audit.verticalDiffusion[0]/capacity,-192,1e-9);
+    EXPECT_NEAR(audit.verticalDiffusion[1]/capacity,192,1e-9);
+    EXPECT_NEAR(audit.horizontalAdvection[0],0,1e-9);
+    auto checkpoint=solver.checkpoint(message); ASSERT_TRUE(checkpoint) << message;
+    const auto saved=audit.verticalDiffusion;
+    ASSERT_TRUE(solver.step(10,message)) << message;
+    const auto replay=solver.heatTransportAudit().verticalDiffusion;
+    ASSERT_TRUE(solver.restoreCheckpoint(*checkpoint,message)) << message;
+    EXPECT_EQ(solver.heatTransportAudit().verticalDiffusion,saved);
+    ASSERT_TRUE(solver.step(10,message)) << message;
+    EXPECT_EQ(solver.heatTransportAudit().verticalDiffusion,replay);
+}
+TEST(Hypsography, SurfaceAndPenetratingSolarEnergyUseActualSurfaceAreaAndStorage) {
+    for (bool weather : {false,true}) {
+        Column column; ASSERT_NO_FATAL_FAILURE(column.build(2,-4,0));
+        std::string message;
+        // The wet surface is 100 m2; the polygon's prism is 5000 m2.
+        ASSERT_TRUE(column.applyCurve({-4,0},{20,100},message));
+        FVQual::State::SpeciesRegistry registry;
+        ASSERT_GE(registry.addTemperature(10,message),0);
+        FVQual::State::StateStore state; state.allocate(column.layered,registry);
+        FVQual::Hydro::InternalModeOptions options;
+        options.neutralViscosity=0; options.backgroundDiffusivity=0;
+        options.surfaceHeatFlux=weather ? 0 : 100;
+        options.auditHeatTransport=true;
+        FVQual::Hydro::InternalModeSolver solver;
+        ASSERT_TRUE(solver.initialize(column.layered,state,registry,options,message));
+        double watts=10000;
+        if (weather) {
+            solver.enableMeteorology(.01); // rays reach both sloping banks and bed
+            auto &met=solver.meteorology();
+            met.airTemperature.setUniform(10); met.dewPoint.setUniform(10);
+            met.windSpeed.setUniform(0); met.shortwave.setUniform(1000);
+            met.base.dragCoefficient=0;
+            watts=100*FVQual::Hydro::surfaceHeatFlux(met.at(0),10).total();
+        }
+        ASSERT_TRUE(solver.step(1,message)) << message;
+        EXPECT_NEAR((solver.totalSpeciesMass(0)-2400)*1000*4186,watts,1e-5);
+        EXPECT_NEAR(solver.scalarBudgetResidual(0)*1000*4186,0,1e-5);
+        const auto &audit=solver.heatTransportAudit();
+        EXPECT_NEAR(audit.surface[0]+audit.surface[1],watts,1e-5);
+        for (int k=0;k<2;++k)
+            EXPECT_NEAR(audit.initial[k]+audit.surface[k],
+                state.speciesAt(0,k)*column.layered.cellVolume()[k]*1000*4186,1e-5);
+        if (!weather) {
+            EXPECT_NEAR(solver.budget().surfaceHeat[5],10000,1e-9);
+            EXPECT_NEAR(state.speciesAt(0,0)-10,10000./(160*1000*4186),1e-12);
+        } else {
+            EXPECT_NEAR(solver.budget().surfaceHeat[0],100*1000*.94,1e-8);
+        }
+    }
+}
+
+TEST(Hypsography, SettlingAccountsForProjectedBanksAndTheBottom) {
+    for (bool receiver : {false,true}) {
+        Column column; ASSERT_NO_FATAL_FAILURE(column.build(2,-4,0));
+        std::string message;
+        ASSERT_TRUE(column.applyCurve({-4,0},{20,100},message));
+        FVQual::State::SpeciesRegistry registry;
+        ASSERT_GE(registry.addTemperature(10,message),0);
+        FVQual::State::SpeciesDefinition particle; particle.id="particles"; particle.units="kg/m3";
+        particle.initialValue=1;
+        ASSERT_GE(registry.add(particle,message),0);
+        FVQual::State::SpeciesDefinition sediment; sediment.id="sediment"; sediment.units="kg/m2";
+        sediment.kind=FVQual::State::SpeciesKind::MsxBenthic;
+        ASSERT_GE(registry.add(sediment,message),0);
+        FVQual::State::StateStore state; state.allocate(column.layered,registry);
+        FVQual::Hydro::InternalModeOptions options;
+        options.neutralViscosity=0; options.backgroundDiffusivity=0;
+        FVQual::Hydro::InternalModeSolver solver;
+        ASSERT_TRUE(solver.initialize(column.layered,state,registry,options,message));
+        ASSERT_TRUE(solver.settling().setVelocity(1,1,registry,message));
+        if (receiver) ASSERT_TRUE(solver.settling().setBenthicReceiver(1,2,registry,message));
+        ASSERT_TRUE(solver.step(1,message));
+        // Independent two-box solution: V=(160,80), interfaces=(100,60,20).
+        EXPECT_NEAR(state.speciesAt(1,0),8./13,1e-12);
+        EXPECT_NEAR(state.speciesAt(1,1),76./91,1e-12);
+        const double deposited=6800./91;
+        EXPECT_NEAR(solver.settling().deliveredToBed(1),deposited,1e-10);
+        EXPECT_NEAR(solver.totalSpeciesMass(1)+(receiver ? solver.totalSpeciesMass(2)
+            : solver.settling().lostToBed(1)),240,1e-10);
+        EXPECT_NEAR(solver.scalarBudgetResidual(1),0,1e-10);
+        EXPECT_NEAR(solver.scalarBudgetResidual(2),0,1e-10);
+        if (receiver) EXPECT_NEAR(solver.totalSpeciesMass(2),deposited,1e-10);
+    }
+}
+
+TEST(Hypsography, ScopedWaterReactionUsesActualSurfaceAndBottomContact) {
+    Column column; ASSERT_NO_FATAL_FAILURE(column.build(2,-4,0));
+    std::string message;
+    ASSERT_TRUE(column.applyCurve({-4,0},{20,100},message));
+    FVQual::State::SpeciesRegistry registry;
+    ASSERT_GE(registry.addTemperature(10,message),0);
+    FVQual::State::SpeciesDefinition tracer; tracer.id="tracer"; tracer.units="kg/m3"; tracer.initialValue=1;
+    ASSERT_GE(registry.add(tracer,message),0);
+    FVQual::State::StateStore state; state.allocate(column.layered,registry);
+    FVQual::Hydro::InternalModeOptions options;
+    options.neutralViscosity=0; options.backgroundDiffusivity=0;
+    FVQual::Hydro::InternalModeSolver solver;
+    ASSERT_TRUE(solver.initialize(column.layered,state,registry,options,message));
+    ASSERT_TRUE(solver.reactions().addRate("tracer","0.1",FVQual::Kinetics::RateScope::Surface,message));
+    ASSERT_TRUE(solver.reactions().addRate("tracer","0 - 0.1",FVQual::Kinetics::RateScope::Bed,message));
+    ASSERT_TRUE(solver.reactions().compile(registry,message));
+    ASSERT_TRUE(solver.step(10,message));
+    EXPECT_NEAR(state.speciesAt(1,0),1.625,1e-10); // 100 kg into 160 m3
+    EXPECT_NEAR(state.speciesAt(1,1),.75,1e-10);   // 20 kg out of 80 m3
+    EXPECT_NEAR(solver.totalSpeciesMass(1),320,1e-8);
+    EXPECT_NEAR(solver.budget().reactions[1],80,1e-8);
+}
+
+TEST(Hypsography, BenthicInventoryRatesRetainArealUnitsAndActOnlyAtBed) {
+    Column column; ASSERT_NO_FATAL_FAILURE(column.build(2,-4,0));
+    std::string message;
+    ASSERT_TRUE(column.applyCurve({-4,0},{20,100},message));
+    FVQual::State::SpeciesRegistry registry;
+    ASSERT_GE(registry.addTemperature(10,message),0);
+    FVQual::State::SpeciesDefinition sediment; sediment.id="sediment"; sediment.units="kg/m2";
+    sediment.kind=FVQual::State::SpeciesKind::MsxBenthic;
+    ASSERT_GE(registry.add(sediment,message),0);
+    FVQual::State::StateStore state; state.allocate(column.layered,registry);
+    FVQual::Hydro::InternalModeOptions options;
+    options.neutralViscosity=0; options.backgroundDiffusivity=0;
+    FVQual::Hydro::InternalModeSolver solver;
+    ASSERT_TRUE(solver.initialize(column.layered,state,registry,options,message));
+    ASSERT_TRUE(solver.reactions().addRate("sediment","0.1",FVQual::Kinetics::RateScope::Bed,message));
+    ASSERT_TRUE(solver.reactions().compile(registry,message));
+    ASSERT_TRUE(solver.step(10,message));
+    EXPECT_EQ(state.speciesAt(1,0),0);
+    EXPECT_NEAR(state.speciesAt(1,1),1,1e-10);
+    EXPECT_NEAR(solver.totalSpeciesMass(1),column.planArea,1e-8);
+}

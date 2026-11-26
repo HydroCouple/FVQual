@@ -22,6 +22,11 @@
 #include "fvqual/state/statestore.h"
 
 #include <string>
+#include <map>
+#include "fvqual/coupling/intervaltransfer.h"
+#include "hydrocouplesdk/io/meshpackage.h"
+#include <optional>
+#include "fvqual/kinetics/reactionfile.h"
 
 namespace FVQual::CApi {
 
@@ -90,6 +95,7 @@ FVQ_ErrorCode guard(Body &&body)
 struct FVQ_Mesh_
 {
     FVQual::Mesh::HorizontalMesh mesh;
+    std::optional<HydroCouple::SDK::IO::MeshPackage> package;
 };
 
 /*!
@@ -114,7 +120,16 @@ struct FVQ_Simulation_
     FVQual::Hydro::InternalModeOptions options;
 
     std::vector<double> initialSurface;
+    std::vector<double> manning;
     bool                initialized = false;
+    nlohmann::json operations = nlohmann::json::object();
+    std::optional<FVQual::Kinetics::ReactionFile> reactionDeck;
+    std::unique_ptr<FVQual::Coupling::IntervalTransferReceiver> receiver;
+    struct Checkpoint {
+        std::shared_ptr<const FVQual::Hydro::InternalModeCheckpoint> solver;
+        std::unique_ptr<FVQual::Coupling::IntervalTransferReceiver> receiver;
+    };
+    std::map<uint64_t, Checkpoint> checkpoints;
 };
 
 #endif // FVQual_CAPI_INTERNAL_HPP

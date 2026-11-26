@@ -29,6 +29,7 @@
 #include "hydrocouplesdk/io/snapshot.h"
 
 #include <filesystem>
+#include <cmath>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -92,7 +93,7 @@ int runCompositionCommand(int argc, char **argv)
     IO::RunRecorder recorder;
     recorder.setCaption("fvqual run " +
                         std::string(FVQual_FULL_VERSION));
-    recorder.setComposition(documentPath);
+    recorder.setComposition(documentPath, spec.toJson(), true);
 
     for (const IO::WriterSpec &writer : spec.writers)
     {
@@ -107,6 +108,7 @@ int runCompositionCommand(int argc, char **argv)
             path = outputBase / path;
         std::filesystem::create_directories(path.parent_path());
         auto csv = std::make_shared<IO::CSVWriter>(path);
+        csv->setTimeUnits("seconds_since_start");
         ioThread.addWriter(csv);
         recorder.addWriter(csv);
     }
@@ -161,13 +163,34 @@ int runCompositionCommand(int argc, char **argv)
                 std::cerr << "workflow error: " << entry.message << '\n';
             return EXIT_FAILURE;
         }
-        IO::Snapshot snapshot(static_cast<double>(step));
+        double elapsed = -1.0;
+        for (IModelComponent *component : components)
+        {
+            auto *fvqual = dynamic_cast<FVQual::Component::FVQualComponent *>(component);
+            if (!fvqual)
+            {
+                std::cerr << "fvqual run requires live FVQual components for time-stamped output\n";
+                return EXIT_FAILURE;
+            }
+            const double current = fvqual->currentTime();
+            if (elapsed >= 0.0 && std::abs(elapsed - current) > 1e-9)
+            {
+                std::cerr << "components reached different times; output requires a shared time coordinate\n";
+                return EXIT_FAILURE;
+            }
+            elapsed = current;
+        }
+        IO::Snapshot snapshot(elapsed);
         bool captured = false;
         for (IModelComponent *component : components)
             for (IOutput *output : component->outputs())
             {
+                if (output->dataKind()==DataKind::String || output->dataKind()==DataKind::Opaque) continue;
                 std::string ignored;
-                captured |= snapshot.capture(*output, ignored);
+                if (!snapshot.capture(*output, ignored) || !snapshot.captureGeometry(*output, ignored)) {
+                    std::cerr << "recording output: " << ignored << '\n'; return EXIT_FAILURE;
+                }
+                captured = true;
             }
         if (captured && !ioThread.enqueue(std::move(snapshot)))
         {
@@ -177,6 +200,11 @@ int runCompositionCommand(int argc, char **argv)
         }
     }
 
+    if (workflow.status() != WorkflowStatus::Done)
+    {
+        std::cerr << "composition did not finish within its maximum steps\n";
+        return EXIT_FAILURE;
+    }
     workflow.finish();
     ioThread.finish();
     if (ioThread.errorCode() != 0)

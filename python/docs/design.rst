@@ -8,11 +8,10 @@ Design of the bindings
    :local:
    :depth: 2
 
-The structure follows :openswmm:`openswmm.engine <>`: a C ABI in the middle, a
-Cython layer on top of it, and a thin Python package over that. The reasons are
-the same in both projects, and they are worth stating because the obvious
-alternative — binding the C++ directly with pybind11 — looks simpler and is
-not.
+The initial package uses standard-library ctypes over the C ABI. This page
+retains the broader runtime-control and array-view design; those parts are
+future scope. A Cython extension may later implement zero-copy array access.
+The C ABI remains the boundary between scripting and the C++ engine.
 
 
 Why a C API sits in the middle

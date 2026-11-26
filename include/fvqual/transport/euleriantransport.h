@@ -74,6 +74,14 @@ enum class AdvectionScheme
     MusclFct
 };
 
+//! Exact admitted advective amounts per cell (concentration * m3), and
+//! upward interface fluxes (concentration * m3/s), before any diffusion.
+//! Optional observation of the numerical flux; enabling it does not alter it.
+struct AdvectionAudit
+{
+    std::vector<double> horizontal, vertical, sources, interfaceFlux;
+};
+
 /*!
  * \brief Conservative scalar advection on the layered mesh.
  */
@@ -129,7 +137,8 @@ public:
                 std::span<const double> edgeLayerFlux,
                 std::span<const double> verticalFlux,
                 std::span<const double> cellSource, std::span<const double> sourceValue,
-                double dt, AdvectionScheme scheme, std::span<double> values);
+                double dt, AdvectionScheme scheme, std::span<double> values,
+                std::span<const double> scalarLoad = {}, AdvectionAudit *audit = nullptr);
 
     /*!
      * \brief Advects one species with no volumetric sources.
@@ -171,7 +180,8 @@ private:
                          std::span<const double> vertical,
                          std::span<const double> cellSource,
                          std::span<const double> sourceValue, double dt,
-                         std::span<const double> before, std::span<double> after) const;
+                         std::span<const double> before, std::span<double> after,
+                         std::span<const double> scalarLoad) const;
 
     void limitAntidiffusiveFluxes(const Mesh::LayeredMesh &mesh,
                                   std::span<const double> oldValues,

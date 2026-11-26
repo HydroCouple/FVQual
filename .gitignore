@@ -42,3 +42,16 @@ verification/data.json
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Native coupling example results (regenerate with verification/swmm_coupling.py)
+examples/swmm_reservoir/live/donor_output/
+examples/swmm_reservoir/live/direct_native/
+examples/swmm_reservoir/live/live_output/
+examples/swmm_reservoir/live/replay_output/
+examples/swmm_reservoir/live/qualification.json
+examples/swmm_reservoir/live/replay_inflows.json
+examples/swmm_reservoir/live/replay.composition.json
+examples/swmm_reservoir/live/*.log
+
+# Worked reservoir-operation runs
+examples/reservoir_operations/output/

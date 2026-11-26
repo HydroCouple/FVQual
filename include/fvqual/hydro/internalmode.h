@@ -57,17 +57,21 @@
 #include "fvqual/fvqual_export.h"
 #include "fvqual/hydro/barotropicsolver.h"
 #include "fvqual/hydro/heatbudget.h"
+#include "fvqual/hydro/processbudget.h"
 #include "fvqual/hydro/turbulence.h"
 #include "fvqual/hydro/pressureclosure.h"
 #include "fvqual/kinetics/lightfield.h"
 #include "fvqual/kinetics/reactionnetwork.h"
 #include "fvqual/forcing/forcingfield.h"
+#include "fvqual/forcing/operationsconfiguration.h"
 #include "fvqual/forcing/sources.h"
 #include "fvqual/forcing/outletgroups.h"
 #include "fvqual/forcing/structures.h"
 #include "fvqual/forcing/transfers.h"
 #include "fvqual/transport/euleriantransport.h"
 #include "fvqual/transport/settling.h"
+#include "fvqual/transport/scalartrace.h"
+#include "fvqual/transport/reactivetrace.h"
 #include "fvqual/mesh/layeredmesh.h"
 #include "fvqual/state/statestore.h"
 
@@ -113,6 +117,13 @@ struct FVQual_EXPORT InternalModeOptions
      *        convective adjustment.
      */
     double convectiveMixing = 1.0e-1;
+
+    //! Diagnostic multipliers for stable Richardson mixing. Each scales only
+    //! its own final coefficient; unstable convective adjustment is retained.
+    //! Non-default values are refused with the k-epsilon closure.
+    double stableViscosityScale = 1.0;
+    double stableDiffusivityScale = 1.0;
+    bool auditMomentum = false; //!< Opt-in vertical-solve and mode-adjustment ledger.
 
     /*!
      * \brief Use the two-equation k-epsilon closure instead of Richardson
@@ -163,6 +174,7 @@ struct FVQual_EXPORT InternalModeOptions
      * \brief Specific heat capacity of water (J/(kg·K)).
      */
     double heatCapacity = 4186.0;
+    bool auditHeatTransport = false; //!< Opt-in cumulative cell/interface heat ledger.
 
     double manningN = 0.03; //!< Bed roughness for the bottom stress.
 
@@ -249,14 +261,36 @@ struct FVQual_EXPORT InternalModeDiagnostics
 /*!
  * \brief Three-dimensional hydrostatic baroclinic solver.
  */
+struct InternalModeCheckpoint;
+
 class FVQual_EXPORT InternalModeSolver
 {
 public:
     InternalModeSolver();
     ~InternalModeSolver();
 
+    //! Record actual upwind transport and implicit vertical diffusion for one
+    //! passive species. Only initial concentrations, source concentrations and
+    //! the recorded diffusion multiplier are differentiated. Completed traces
+    //! are immutable and usable after solver destruction. maxSteps bounds memory.
+    [[nodiscard]] bool beginScalarTrace(int species, size_t maxSteps, std::string &message);
+    void endScalarTrace() noexcept { m_traceSpecies = -1; }
+    [[nodiscard]] const Transport::ScalarTrajectory &scalarTrace() const noexcept { return m_scalarTrace; }
+    //! Native multispecies derivatives conditional on the executed hydraulics.
+    //! Pollutants/MSX and kinetic constants only; no density-changing reactions,
+    //! self-shading, settling, horizontal diffusion, transfers or open boundaries.
+    [[nodiscard]] bool beginReactiveTrace(size_t maxSteps,std::string &message);
+    void endReactiveTrace() noexcept { m_recordReactive=false; }
+    [[nodiscard]] const Transport::ReactiveTrajectory &reactiveTrace() const noexcept { return m_reactiveTrace; }
+
     InternalModeSolver(const InternalModeSolver &)            = delete;
     InternalModeSolver &operator=(const InternalModeSolver &) = delete;
+
+    //! Complete same-instance in-memory state, including private solver history.
+    //! Tokens are for replay/rollback, not durable restart or another simulation.
+    [[nodiscard]] std::shared_ptr<const InternalModeCheckpoint> checkpoint(std::string &message) const;
+    [[nodiscard]] bool restoreCheckpoint(const InternalModeCheckpoint &checkpoint, std::string &message);
+
 
     /*!
      * \brief Binds the solver to a mesh, a state store, and a species set.
@@ -293,7 +327,7 @@ public:
 
     /*!
      * \brief Largest stable internal time step (s), from the advective and
-     *        internal-wave Courant limits.
+     *        internal-wave Courant limits and gross cell withdrawal.
      */
     [[nodiscard]] double stableTimeStep() const;
 
@@ -315,6 +349,21 @@ public:
     [[nodiscard]] const BarotropicSolver &external() const noexcept { return m_external; }
 
     [[nodiscard]] double time() const noexcept { return m_time; }
+    [[nodiscard]] const ProcessBudget &budget() const noexcept { return m_budget; }
+    [[nodiscard]] const HeatTransportAudit &heatTransportAudit() const noexcept { return m_heatAudit; }
+    [[nodiscard]] const std::vector<MomentumColumnAudit> &momentumAudit() const noexcept { return m_momentumAudit; }
+    //! Baroclinic accelerations used at the opening of the last step (m/s2).
+    [[nodiscard]] const std::vector<double> &baroclinicAccelerationX() const noexcept { return m_accelerationX; }
+    [[nodiscard]] const std::vector<double> &baroclinicAccelerationY() const noexcept { return m_accelerationY; }
+    [[nodiscard]] double waterBudgetResidual() const;
+    [[nodiscard]] double scalarBudgetResidual(int species) const;
+    //! Controls are configuration and are captured by replay checkpoints.
+    void setOperationControls(std::vector<Forcing::OperationControl> controls);
+    [[nodiscard]] const InternalModeOptions &options() const noexcept { return m_options; }
+    //! Clear configuration and invalidate all existing replay tokens.
+    void reset() noexcept;
+    //! Apply per-column roughness to both external and internal bottom stress.
+    [[nodiscard]] bool setManning(std::span<const double> values, std::string &message);
 
     [[nodiscard]] const InternalModeDiagnostics &diagnostics() const noexcept
     {
@@ -595,12 +644,28 @@ public:
     [[nodiscard]] double totalSpeciesMass(int species) const;
 
 private:
+    struct CheckpointCopy {};
+    InternalModeSolver(const InternalModeSolver &other, CheckpointCopy);
+    InternalModeSolver &operator=(InternalModeSolver &&other) noexcept = default;
+    uint64_t m_checkpointGeneration = 0;
+    bool m_checkpointReady = false;
+    int m_traceSpecies = -1;
+    size_t m_traceLimit = 0;
+    Transport::ScalarTrajectory m_scalarTrace;
+    bool m_recordReactive=false;
+    size_t m_reactiveLimit=0;
+    Transport::ReactiveTrajectory m_reactiveTrace;
+    bool reactiveTraceSupported(std::string &message) const;
+    bool reactiveTraceReady(std::string &message) const;
+    bool scalarTraceSupported(int species, std::string &message) const;
+    bool scalarTraceReady(std::string &message) const;
+
     void   updateVerticalMixing(double dt);
     void   advanceMomentum(double dt);
     void   applyModeAdjustment();
     void   computeLayerFluxes();
     void   diagnoseVerticalFlux(double dt);
-    void   transportScalars(double dt);
+    void   transportScalars(double dt,Transport::ReactiveStep *reactive=nullptr);
     void   updateCellDepth();
     void   refreshBoundarySources(double dt);
     void   applyBoundaryComposition(int species);
@@ -632,6 +697,17 @@ private:
     const State::SpeciesRegistry *m_species = nullptr;
 
     InternalModeOptions               m_options;
+    std::vector<MomentumColumnAudit>   m_momentumAudit;
+    ProcessBudget                     m_budget;
+    HeatTransportAudit                m_heatAudit;
+    Transport::AdvectionAudit         m_advectionAudit;
+    std::vector<double>               m_heatAuditWork;
+    bool                              m_budgetStarted = false;
+    std::vector<Forcing::OperationControl> m_operationControls;
+    bool applyOperationControls(std::string &message);
+    double nextOperationTime() const;
+    void resetBudget();
+    std::vector<double>               m_manning;
     mutable InternalModeDiagnostics m_diagnostics;
     BarotropicSolver                  m_external;
     Transport::EulerianTransport      m_transport;
@@ -700,6 +776,11 @@ private:
     std::vector<double> m_workU;
     std::vector<double> m_workV;
     std::vector<double> m_scalarWork;
+    std::vector<double> m_scalarLoad;
+    // Derived scratch is fully overwritten each diffusion substep, so it is
+    // not checkpoint history. Preallocation avoids allocations in transport.
+    std::vector<double> m_diffusionGradX, m_diffusionGradY, m_diffusionLow;
+    std::vector<double> m_diffusionPlus, m_diffusionMinus;
     std::vector<double> m_cellSource;
     std::vector<double> m_columnSource;
 

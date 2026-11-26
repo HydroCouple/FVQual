@@ -33,6 +33,7 @@
 #ifndef FVQual_KINETICS_ODESOLVER_H
 #define FVQual_KINETICS_ODESOLVER_H
 
+#include "fvqual/fvqual_export.h"
 #include <functional>
 #include <vector>
 
@@ -87,7 +88,7 @@ using DerivFunc = std::function<void(double x, const double* y, double* dydx)>;
  * @param derivs  Derivative callback function.
  * @returns ODE_OK on success, or error code.
  */
-int integrate(double* y, int n, double x1, double x2,
+FVQual_EXPORT int integrate(double* y, int n, double x1, double x2,
               double eps, double h1, const DerivFunc& derivs);
 
 // ============================================================================
@@ -117,7 +118,7 @@ using BatchDerivFunc = std::function<void(double x,
     const double* y0, const double* y1,
     double* dy0, double* dy1, int n_sys)>;
 
-int integrate_batch_2eq(double* y0, double* y1, int n_sys,
+FVQual_EXPORT int integrate_batch_2eq(double* y0, double* y1, int n_sys,
                         double x1, double x2, double eps, double h1,
                         const BatchDerivFunc& derivs);
 

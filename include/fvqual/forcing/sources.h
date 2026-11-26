@@ -49,6 +49,10 @@
 
 namespace FVQual::Forcing {
 
+//! Derivative of gross scalar load at fixed water/placement: inflow rate times
+//! source concentration, plus a diagonal ambient withdrawal contribution.
+struct ScalarSourceEntry { size_t cell, source; double rate; };
+
 /*!
  * \brief How a source's discharge is spread over the water column.
  */
@@ -90,6 +94,9 @@ enum class Placement
      */
     SelectiveWithdrawal
 };
+
+//! Accounting origin; internal transfers are redistribution, not external inputs.
+enum class SourceOrigin { Source, Structure, Boundary, Coupled, InternalTransfer, Count };
 
 /*!
  * \brief One inflow or withdrawal.
@@ -169,6 +176,7 @@ struct FVQual_EXPORT Source
      * \brief Identifier for reporting.
      */
     std::string id;
+    SourceOrigin origin = SourceOrigin::Source;
 };
 
 /*!
@@ -177,6 +185,8 @@ struct FVQual_EXPORT Source
 class FVQual_EXPORT SourceSet
 {
 public:
+    void scalarLinearization(const Mesh::LayeredMesh &mesh,
+        std::vector<double> &withdrawal, std::vector<ScalarSourceEntry> &incoming) const;
     /*!
      * \brief Registers a source.
      * \param[in]  source  The inflow or withdrawal.
@@ -222,6 +232,12 @@ public:
      *        withdrawals — the quantity a volume budget must account for.
      */
     [[nodiscard]] double netDischarge() const noexcept;
+
+    //! Gross cell withdrawal limit, including collocated in/out exchange.
+    //! Recomputes placement; inflows cannot cancel depletion of old inventory.
+    [[nodiscard]] double withdrawalTimeStep(const Mesh::LayeredMesh &mesh,
+        std::span<const double> density, double gravity, double referenceDensity,
+        double courant) const;
 
     /*!
      * \brief Distributes every source over the cells of its column.
@@ -332,6 +348,10 @@ public:
      */
     void inflowConcentration(const Mesh::LayeredMesh &mesh, int species,
                              int temperatureIndex, std::vector<double> &out) const;
+
+    //! Sum each inlet load and each ambient withdrawal separately. Valid after distribute().
+    void scalarLoad(const Mesh::LayeredMesh &mesh, int species, int temperatureIndex,
+                    std::span<const double> ambient, std::vector<double> &out) const;
 
     /*!
      * \brief Half-height of the withdrawal envelope computed for each source

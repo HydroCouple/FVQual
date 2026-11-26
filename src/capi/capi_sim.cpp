@@ -4,6 +4,8 @@
 #include "capi_internal.hpp"
 
 #include "fvqual/capi/fvqual_sim.h"
+#include "fvqual/capi/fvqual_configuration.h"
+#include <sstream>
 
 #include <memory>
 #include <string>
@@ -38,6 +40,67 @@ FVQ_ErrorCode requireState(const FVQ_Simulation *sim, bool wantInitialized,
 
 extern "C" {
 
+FVQ_ErrorCode fvq_sim_scalar_snapshot(const FVQ_Simulation *sim,int species,double *values,
+    double *volumes,int64_t cells,double *interfaces,int64_t interfaceCount)
+{
+    return guard([&]() -> FVQ_ErrorCode {
+        const auto status=requireState(sim,true,"reading scalar state");if(status!=FVQ_OK)return status;
+        if(!values || !volumes || !interfaces)return fail(FVQ_ERR_NULL_ARGUMENT,"snapshot arrays are required");
+        if(species<0 || species>=sim->registry.count() || cells!=sim->layered.cellCount() ||
+           interfaceCount!=sim->layered.interfaceSlotCount())
+            return fail(FVQ_ERR_INVALID_ARGUMENT,"snapshot species or dimensions differ");
+        const auto block=sim->state.speciesBlock(species);
+        std::copy(block.begin(),block.end(),values);
+        std::copy(sim->layered.cellVolume().begin(),sim->layered.cellVolume().end(),volumes);
+        for(int64_t c=0;c<sim->layered.columnCount();++c)
+            for(int k=0;k<=sim->layered.layerCount();++k) interfaces[sim->layered.interfaceSlot(c,k)]=sim->layered.z(c,k);
+        return succeed();
+    });
+}
+
+FVQ_ErrorCode fvq_sim_configure_json(FVQ_Simulation *sim, const char *json)
+{
+    return guard([&]() -> FVQ_ErrorCode {
+        const auto status = requireState(sim, false, "configuring operations");
+        if (status != FVQ_OK) return status;
+        if (!json) return fail(FVQ_ERR_NULL_ARGUMENT, "configuration JSON is required");
+        if (sim->reactionDeck) return fail(FVQ_ERR_LIFECYCLE, "reaction species already registered; configure the reaction deck once");
+        auto config = nlohmann::json::parse(json);
+        auto registry = sim->registry;
+        std::optional<FVQual::Kinetics::ReactionFile> deck;
+        std::string message;
+        if (config.contains("reaction_deck")) {
+            deck.emplace();
+            std::istringstream text(config.at("reaction_deck").get<std::string>());
+            if (!deck->parse(text, "reaction_deck", message) || !deck->registerSpecies(registry, message))
+                return fail(FVQ_ERR_SPECIES, message);
+            config.erase("reaction_deck");
+        }
+        FVQual::Mesh::LayeredMesh layered;
+        FVQual::State::StateStore state;
+        FVQual::Hydro::InternalModeSolver solver;
+        if (!layered.build(sim->horizontal, sim->sigma, sim->initialSurface, message)) return fail(FVQ_ERR_MESH, message);
+        state.allocate(layered, registry);
+        if (!solver.initialize(layered, state, registry, sim->options, message) ||
+            !FVQual::Forcing::configureOperations(solver, sim->horizontal, registry, config, message)) return fail(FVQ_ERR_INVALID_ARGUMENT, message);
+        if (deck && (!deck->configure(solver, message) || !solver.compileReactions(message))) return fail(FVQ_ERR_SPECIES, message);
+        sim->registry = std::move(registry); sim->operations = std::move(config); sim->reactionDeck = std::move(deck);
+        return succeed();
+    });
+}
+
+FVQ_ErrorCode fvq_sim_budget_value(const FVQ_Simulation *sim, const char *name, double *value)
+{
+    return guard([&]() -> FVQ_ErrorCode {
+        const auto status = requireState(sim, true, "reading a budget");
+        if (status != FVQ_OK) return status;
+        if (!name || !value) return fail(FVQ_ERR_NULL_ARGUMENT, "budget name and value are required");
+        auto budget = FVQual::Forcing::processBudgetValues(sim->solver, sim->registry);
+        if (!budget.contains(name)) return fail(FVQ_ERR_INVALID_ARGUMENT, "unknown budget quantity");
+        *value = budget.at(name); return succeed();
+    });
+}
+
 FVQ_ErrorCode fvq_sim_create(const FVQ_Mesh *mesh, const FVQ_SigmaSpec *sigma,
                              const FVQ_Options *options, FVQ_Simulation **out)
 {
@@ -66,6 +129,12 @@ FVQ_ErrorCode fvq_sim_create(const FVQ_Mesh *mesh, const FVQ_SigmaSpec *sigma,
 
         handle->initialSurface.assign(
             static_cast<size_t>(handle->horizontal.faceCount()), 0.0);
+        if (mesh->package) {
+            handle->manning = mesh->package->roughness;
+            if (!mesh->package->initialDepth.empty())
+                for (size_t c = 0; c < handle->initialSurface.size(); ++c)
+                    handle->initialSurface[c] = handle->horizontal.faceBed()[c] + mesh->package->initialDepth[c];
+        }
 
         *out = handle.release();
         return succeed();
@@ -177,6 +246,7 @@ FVQ_ErrorCode fvq_sim_initialize(FVQ_Simulation *sim)
 
         std::string message;
 
+        sim->solver.reset();
         if (!sim->layered.build(sim->horizontal, sim->sigma, sim->initialSurface, message))
         {
             // A surface at or below the bed is the common cause, and it is
@@ -195,6 +265,12 @@ FVQ_ErrorCode fvq_sim_initialize(FVQ_Simulation *sim)
             return fail(dry ? FVQ_ERR_DRY_COLUMN : FVQ_ERR_INVALID_ARGUMENT, message);
         }
 
+        if (!sim->manning.empty() && !sim->solver.setManning(sim->manning, message))
+            return fail(FVQ_ERR_INVALID_ARGUMENT, message);
+        if (!FVQual::Forcing::configureOperations(sim->solver, sim->horizontal, sim->registry, sim->operations, message))
+            return fail(FVQ_ERR_INVALID_ARGUMENT, message);
+        if (sim->reactionDeck && (!sim->reactionDeck->configure(sim->solver, message) || !sim->solver.compileReactions(message)))
+            return fail(FVQ_ERR_SPECIES, message);
         sim->initialized = true;
         return succeed();
     });

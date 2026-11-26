@@ -17,6 +17,7 @@
 #include "fvqual/capi/fvqual_options.h"
 #include "fvqual/capi/fvqual_sigma.h"
 #include "fvqual/capi/fvqual_sim.h"
+#include "fvqual/capi/fvqual_coupling.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -286,6 +287,54 @@ static void testSeiche(void)
     fvq_mesh_destroy(mesh);
 }
 
+
+static void testCouplingReplay(void)
+{
+    FVQ_Mesh *mesh = NULL;
+    FVQ_Simulation *sim = NULL;
+    FVQ_SigmaSpec sigma;
+    FVQ_InflowSpecies species = {"tracer", 0.0002};
+    FVQ_InflowTransfer transfer = {0, 0.001, 50232.0, FVQ_INFLOW_UNIFORM, 0.0, &species, 1};
+    FVQ_TransferReceipt receipt;
+    uint64_t token = 0;
+    double before = 0.0, mass = 0.0;
+    int tracer = -1;
+    printf("conservative inflow and complete replay\n");
+    fvq_sigma_default(&sigma);
+    sigma.layerCount = 2;
+    sigma.minLayerThickness = 0.0;
+    checkCall(fvq_mesh_create_channel(2, 10.0, 2.0, -5.0, &mesh), "coupling mesh builds");
+    checkCall(fvq_sim_create(mesh, &sigma, NULL, &sim), "coupling simulation builds");
+    checkCall(fvq_sim_add_temperature(sim, 10.0, NULL), "temperature is registered");
+    checkCall(fvq_sim_add_species(sim, "tracer", "kg/m3", 0.0, &tracer), "tracer is registered");
+    checkCall(fvq_sim_initialize(sim), "receiver initializes");
+    before = fvq_sim_total_volume(sim);
+    checkCall(fvq_sim_save_state(sim, &token), "full checkpoint is saved");
+    checkCall(fvq_sim_apply_inflow_frame(sim, "OF1/1", 0.0, 0.1, &transfer, 1, &receipt),
+              "one-way frame is accepted");
+    check(fabs(fvq_sim_total_volume(sim) - before - 0.001) < 1e-10, "accepted water enters reservoir");
+    checkCall(fvq_sim_transfer_species_receipt(sim, "OF1/1", "tracer", &mass), "species receipt is readable");
+    check(fabs(mass - 0.0002) < 1e-12, "species receipt closes");
+    checkCall(fvq_sim_apply_inflow_frame(sim, "OF1/1", 0.0, 0.1, &transfer, 1, &receipt),
+              "identical retry succeeds");
+    check(receipt.replayed && fabs(fvq_sim_time(sim) - 0.1) < 1e-12, "retry does not advance or debit again");
+    transfer.volumeM3 = 0.002;
+    check(fvq_sim_apply_inflow_frame(sim, "OF1/1", 0.0, 0.1, &transfer, 1, &receipt) != FVQ_OK,
+          "changed retry is refused");
+    transfer.volumeM3 = 0.001;
+    checkCall(fvq_sim_restore_state(sim, token), "state and receipt ledger restore together");
+    check(fabs(fvq_sim_time(sim)) < 1e-12, "restored clock is zero");
+    check(fvq_sim_transfer_species_receipt(sim, "OF1/1", "tracer", &mass) != FVQ_OK,
+          "future receipt is removed on restore");
+    checkCall(fvq_sim_apply_inflow_frame(sim, "OF1/1", 0.0, 0.1, &transfer, 1, &receipt),
+              "restored interval can be replayed");
+    check(!receipt.replayed, "restored interval is freshly applied");
+    checkCall(fvq_sim_release_state(sim, token), "checkpoint is released");
+    check(fvq_sim_release_state(sim, token) != FVQ_OK, "double release is refused");
+    fvq_sim_destroy(sim);
+    fvq_mesh_destroy(mesh);
+}
+
 int main(void)
 {
     printf("FVQual C API — version %s\n\n", fvq_version());
@@ -295,6 +344,7 @@ int main(void)
     testLifecycle();
     testDryColumnRefused();
     testSeiche();
+    testCouplingReplay();
 
     printf("\n%s\n", failures == 0 ? "all checks passed" : "FAILURES PRESENT");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

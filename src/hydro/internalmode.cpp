@@ -4,6 +4,7 @@
 #include "fvqual/hydro/internalmode.h"
 
 #include "fvqual/hydro/equationofstate.h"
+#include "fvqual/hydro/columnphysics.h"
 
 #include "fvqual/parallel.h"
 
@@ -91,6 +92,9 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
                                     const InternalModeOptions &options,
                                     std::string &message)
 {
+    m_checkpointReady = false;
+    m_traceSpecies = -1; m_traceLimit = 0; m_scalarTrace = {};
+    m_recordReactive=false;m_reactiveLimit=0;m_reactiveTrace={};
     if (mesh.columnCount() <= 0 || mesh.layerCount() <= 0)
     {
         message = "internal mode needs a layered mesh with at least one layer";
@@ -109,6 +113,14 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
         return false;
     }
 
+    if (!std::isfinite(options.stableViscosityScale) || options.stableViscosityScale < 0 ||
+        !std::isfinite(options.stableDiffusivityScale) || options.stableDiffusivityScale < 0 ||
+        (options.useTurbulenceClosure && (options.stableViscosityScale != 1 ||
+                                        options.stableDiffusivityScale != 1))) {
+        message = "stable mixing scales must be finite and nonnegative, and require Richardson mixing";
+        return false;
+    }
+
     if (options.cflNumber <= 0.0 || options.cflNumber > 1.0)
     {
         message = "the Courant number must lie in (0, 1]";
@@ -119,7 +131,11 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_state   = &state;
     m_species = &species;
     m_options = options;
+    m_momentumAudit.assign(options.auditMomentum ? static_cast<size_t>(mesh.columnCount()) : 0, {});
+    m_manning.assign(static_cast<size_t>(mesh.columnCount()), options.manningN);
     m_time    = 0.0;
+    resetBudget();
+    m_budgetStarted = false;
 
     m_temperatureIndex = species.temperatureIndex();
     m_salinityIndex    = options.salinitySpeciesId.empty()
@@ -225,6 +241,9 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_workU.assign(cells, 0.0);
     m_workV.assign(cells, 0.0);
     m_scalarWork.assign(cells, 0.0);
+    m_diffusionGradX.assign(cells, 0.0); m_diffusionGradY.assign(cells, 0.0);
+    m_diffusionLow.assign(cells, 0.0);
+    m_diffusionPlus.assign(cells, 0.0); m_diffusionMinus.assign(cells, 0.0);
     m_cellSource.assign(cells, 0.0);
     m_columnSource.assign(static_cast<size_t>(mesh.columnCount()), 0.0);
 
@@ -244,6 +263,21 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_sweep.assign(scratch, 0.0);
 
     m_transport.initialize(mesh);
+
+    m_heatAudit = {};
+    m_advectionAudit = {};
+    m_heatAuditWork.clear();
+    if (options.auditHeatTransport && m_temperatureIndex >= 0) {
+        for (auto *amount : {&m_heatAudit.initial, &m_heatAudit.horizontalAdvection,
+             &m_heatAudit.verticalAdvection, &m_heatAudit.sources, &m_heatAudit.horizontalDiffusion,
+             &m_heatAudit.verticalDiffusion, &m_heatAudit.surface, &m_heatAudit.other})
+            amount->assign(cells, 0.0);
+        m_heatAudit.upwardAdvection.assign(interfaces, 0.0);
+        m_heatAudit.upwardDiffusion.assign(interfaces, 0.0);
+        const double capacity = options.referenceDensity * options.heatCapacity;
+        for (size_t i = 0; i < cells; ++i)
+            m_heatAudit.initial[i] = state.speciesAt(m_temperatureIndex, i) * mesh.cellVolume()[i] * capacity;
+    }
 
     // Head-driven structures follow the free surface inside the subcycle. Only
     // the column totals are refreshed here: the external mode consumes nothing
@@ -277,6 +311,8 @@ bool InternalModeSolver::initialize(Mesh::LayeredMesh &mesh, State::StateStore &
     m_diagnostics             = InternalModeDiagnostics{};
     m_diagnostics.totalVolume = mesh.totalVolume();
 
+    ++m_checkpointGeneration;
+    m_checkpointReady = true;
     message.clear();
     return true;
 }
@@ -421,8 +457,8 @@ void InternalModeSolver::updateVerticalMixing(double dt)
 
             if (spacing <= 0.0)
             {
-                m_km[slot] = m_options.backgroundViscosity;
-                m_kz[slot] = m_options.backgroundDiffusivity;
+                m_km[slot] = m_options.backgroundViscosity * m_options.stableViscosityScale;
+                m_kz[slot] = m_options.backgroundDiffusivity * m_options.stableDiffusivityScale;
                 continue;
             }
 
@@ -449,12 +485,10 @@ void InternalModeSolver::updateVerticalMixing(double dt)
 
             // Pacanowski-Philander: mixing collapses as the square of the
             // stratification, which is what lets a thermocline survive.
-            const double damping = 1.0 + 5.0 * richardson;
-
-            m_km[slot] = m_options.neutralViscosity / (damping * damping) +
-                         m_options.backgroundViscosity;
-
-            m_kz[slot] = m_km[slot] / damping + m_options.backgroundDiffusivity;
+            const auto mixing=ColumnPhysics::richardson(buoyancy,shear,m_options.neutralViscosity,
+                m_options.backgroundViscosity,m_options.backgroundDiffusivity,
+                m_options.stableViscosityScale,m_options.stableDiffusivityScale,m_options.convectiveMixing);
+            m_km[slot]=mixing.viscosity;m_kz[slot]=mixing.diffusivity;
         }
     }
 
@@ -464,12 +498,30 @@ void InternalModeSolver::updateVerticalMixing(double dt)
 double InternalModeSolver::bottomDragCoefficient(int64_t column) const
 {
     const double depth = m_mesh->columnDepth()[static_cast<size_t>(column)];
+    const double n = m_manning[static_cast<size_t>(column)];
 
-    if (depth <= 0.0 || m_options.manningN <= 0.0)
+    if (depth <= 0.0 || n <= 0.0)
         return 0.0;
 
-    return m_options.gravity * m_options.manningN * m_options.manningN /
+    return m_options.gravity * n * n /
            std::pow(depth, 1.0 / 3.0);
+}
+
+bool InternalModeSolver::setManning(std::span<const double> values, std::string &message)
+{
+    if (!m_checkpointReady || values.size() != m_manning.size()) {
+        message = "roughness requires one value per initialized column";
+        return false;
+    }
+    for (double value : values)
+        if (!std::isfinite(value) || value < 0.0) {
+            message = "roughness must be finite and nonnegative";
+            return false;
+        }
+    std::vector<double> candidate(values.begin(), values.end());
+    if (!m_external.setManning(candidate, message)) return false;
+    m_manning = std::move(candidate);
+    return true;
 }
 
 double InternalModeSolver::stableTimeStep() const
@@ -483,8 +535,6 @@ double InternalModeSolver::stableTimeStep() const
 
     const double spacing = horizontal.minimumCentroidDistance();
 
-    if (spacing <= 0.0)
-        return m_options.maxTimeStep;
 
     double fastest = 0.0;
 
@@ -531,7 +581,7 @@ double InternalModeSolver::stableTimeStep() const
     if (reduced > 0.0)
         fastest = std::max(fastest, std::sqrt(reduced * deepest));
 
-    double limit = fastest > 0.0 ? m_options.cflNumber * spacing / fastest
+    double limit = fastest > 0.0 && spacing > 0.0 ? m_options.cflNumber * spacing / fastest
                                  : m_options.maxTimeStep;
 
     // Which constraint actually binds, and where. Chasing a collapsing step by
@@ -596,7 +646,11 @@ double InternalModeSolver::stableTimeStep() const
         }
     }
 
-    return std::clamp(limit, m_options.minTimeStep, m_options.maxTimeStep);
+    // A net-zero source can still flush a cell's entire scalar inventory.
+    // Never raise this depletion limit to the hydrodynamic time-step floor.
+    return std::min(std::min(std::max(limit, m_options.minTimeStep), m_options.maxTimeStep),
+        m_sources.withdrawalTimeStep(mesh, state.density, m_options.gravity,
+                                     m_options.referenceDensity, m_options.cflNumber));
 }
 
 void InternalModeSolver::advanceMomentum(double dt)
@@ -750,6 +804,18 @@ void InternalModeSolver::advanceMomentum(double dt)
         double      *sweepBuf    = m_sweep.data() + slot;
 
         const double drag = bottomDragCoefficient(c);
+        const size_t bottomCell = static_cast<size_t>(mesh.cell(c, layers - 1));
+        // Freeze the vector speed before either component is solved. Reusing
+        // updated u when solving v would make isotropic drag depend on axes.
+        const double bottomSpeed = std::hypot(m_workU[bottomCell], m_workV[bottomCell]);
+        const double surfaceArea = mesh.interfaceArea()[static_cast<size_t>(mesh.interfaceSlot(c, 0))];
+        const double bedArea = mesh.interfaceArea()[static_cast<size_t>(mesh.interfaceSlot(c, layers))];
+        std::vector<double> beforeU, beforeV;
+        if (m_options.auditMomentum) {
+            const auto first = static_cast<ptrdiff_t>(mesh.cell(c, 0));
+            beforeU.assign(m_workU.begin()+first, m_workU.begin()+first+layers);
+            beforeV.assign(m_workV.begin()+first, m_workV.begin()+first+layers);
+        }
 
         for (int component = 0; component < 2; ++component)
         {
@@ -763,7 +829,13 @@ void InternalModeSolver::advanceMomentum(double dt)
             for (int k = 0; k < layers; ++k)
             {
                 const size_t cell      = static_cast<size_t>(mesh.cell(c, k));
-                const double thickness = std::max(mesh.thickness()[cell], 1.0e-12);
+                const double volume = mesh.cellVolume()[cell];
+
+                if (volume <= 0.0) {
+                    lowerBuf[k]=upperBuf[k]=0.0;
+                    diagonalBuf[k]=1.0; rhsBuf[k]=field[cell];
+                    continue;
+                }
 
                 double lower = 0.0;
                 double upper = 0.0;
@@ -773,8 +845,8 @@ void InternalModeSolver::advanceMomentum(double dt)
                     const size_t above = static_cast<size_t>(mesh.cell(c, k - 1));
                     const double spacing =
                         0.5 * (mesh.thickness()[above] + mesh.thickness()[cell]);
-                    lower = -dt * m_km[static_cast<size_t>(mesh.interfaceSlot(c, k))] /
-                            (thickness * std::max(spacing, 1.0e-12));
+                    const size_t contact = static_cast<size_t>(mesh.interfaceSlot(c, k));
+                    lower = ColumnPhysics::exchange(dt,m_km[contact],mesh.interfaceArea()[contact],volume,spacing);
                 }
 
                 if (k + 1 < layers)
@@ -782,8 +854,8 @@ void InternalModeSolver::advanceMomentum(double dt)
                     const size_t below = static_cast<size_t>(mesh.cell(c, k + 1));
                     const double spacing =
                         0.5 * (mesh.thickness()[cell] + mesh.thickness()[below]);
-                    upper = -dt * m_km[static_cast<size_t>(mesh.interfaceSlot(c, k + 1))] /
-                            (thickness * std::max(spacing, 1.0e-12));
+                    const size_t contact = static_cast<size_t>(mesh.interfaceSlot(c, k + 1));
+                    upper = ColumnPhysics::exchange(dt,m_km[contact],mesh.interfaceArea()[contact],volume,spacing);
                 }
 
                 lowerBuf[k]    = lower;
@@ -794,14 +866,13 @@ void InternalModeSolver::advanceMomentum(double dt)
                 if (k == 0)
                 {
                     // Wind stress enters through the surface interface.
-                    rhsBuf[0] += dt * surfaceAcceleration / thickness;
+                    rhsBuf[0] += dt * surfaceAcceleration * surfaceArea / volume;
                 }
 
                 if (k == layers - 1 && drag > 0.0)
                 {
                     // Semi-implicit quadratic bed drag on the bottom layer.
-                    const double speed = std::hypot(m_workU[cell], m_workV[cell]);
-                    diagonalBuf[k] += dt * drag * speed / thickness;
+                    diagonalBuf[k] += dt * drag * bottomSpeed * bedArea / volume;
                 }
             }
 
@@ -810,6 +881,57 @@ void InternalModeSolver::advanceMomentum(double dt)
 
             for (int k = 0; k < layers; ++k)
                 field[static_cast<size_t>(mesh.cell(c, k))] = solutionBuf[k];
+        }
+        if (m_options.auditMomentum) {
+            auto &audit = m_momentumAudit[static_cast<size_t>(c)];
+            const double rho = m_options.referenceDensity;
+            const size_t top = static_cast<size_t>(mesh.cell(c,0));
+            const double ix = dt * m_windStressX[static_cast<size_t>(c)] * surfaceArea;
+            const double iy = dt * m_windStressY[static_cast<size_t>(c)] * surfaceArea;
+            const double bedFactor = dt * rho * drag * bottomSpeed * bedArea;
+            const double bx = bedFactor * m_workU[bottomCell], by = bedFactor * m_workV[bottomCell];
+            const double work = ix * m_workU[top] + iy * m_workV[top];
+            const double bedLoss = bedFactor * (m_workU[bottomCell]*m_workU[bottomCell] +
+                                                m_workV[bottomCell]*m_workV[bottomCell]);
+            double dx=0, dy=0, energy=0, implicitLoss=0, viscosityLoss=0;
+            double impulseInventory=0, energyInventory=0;
+            for (int k=0; k<layers; ++k) {
+                const size_t cell=static_cast<size_t>(mesh.cell(c,k));
+                const double mass=rho*mesh.cellVolume()[cell];
+                const double du=m_workU[cell]-beforeU[k], dv=m_workV[cell]-beforeV[k];
+                dx+=mass*du; dy+=mass*dv;
+                energy+=.5*mass*(du*(m_workU[cell]+beforeU[k])+dv*(m_workV[cell]+beforeV[k]));
+                impulseInventory+=mass*(std::abs(m_workU[cell])+std::abs(beforeU[k])+
+                                        std::abs(m_workV[cell])+std::abs(beforeV[k]));
+                energyInventory+=.5*mass*(m_workU[cell]*m_workU[cell]+m_workV[cell]*m_workV[cell]+
+                                          beforeU[k]*beforeU[k]+beforeV[k]*beforeV[k]);
+                implicitLoss+=.5*mass*(du*du+dv*dv);
+                if (k>0) {
+                    const size_t above=cell-1, contact=static_cast<size_t>(mesh.interfaceSlot(c,k));
+                    const double spacing=.5*(mesh.thickness()[cell]+mesh.thickness()[above]);
+                    const double shearU=m_workU[above]-m_workU[cell], shearV=m_workV[above]-m_workV[cell];
+                    viscosityLoss+=dt*rho*m_km[contact]*mesh.interfaceArea()[contact]/spacing*
+                                   (shearU*shearU+shearV*shearV);
+                }
+            }
+            const double rx=dx-ix+bx, ry=dy-iy+by;
+            const double re=energy-work+bedLoss+viscosityLoss+implicitLoss;
+            audit.windImpulseX+=ix; audit.windImpulseY+=iy;
+            audit.bedImpulseX+=bx; audit.bedImpulseY+=by;
+            audit.verticalResidualX+=rx; audit.verticalResidualY+=ry;
+            audit.windWork+=work; audit.bedDissipation+=bedLoss;
+            audit.viscosityDissipation+=viscosityLoss; audit.implicitDissipation+=implicitLoss;
+            audit.verticalEnergyResidual+=re;
+            audit.maxAbsoluteImpulseResidual=std::max(audit.maxAbsoluteImpulseResidual,std::max(std::abs(rx),std::abs(ry)));
+            audit.maxAbsoluteEnergyResidual=std::max(audit.maxAbsoluteEnergyResidual,std::abs(re));
+            // Subtracting nearby velocities loses precision relative to their
+            // inventories, even when the step impulse is almost zero. Include
+            // that inventory in the scale rather than dividing round-off by a
+            // vanishing increment; retain absolute residuals for inspection.
+            audit.maxRelativeImpulseResidual=std::max(audit.maxRelativeImpulseResidual,
+                std::max(std::abs(rx),std::abs(ry))/std::max({1.,impulseInventory,std::abs(dx),std::abs(dy),std::abs(ix),std::abs(iy),std::abs(bx),std::abs(by)}));
+            audit.maxRelativeEnergyResidual=std::max(audit.maxRelativeEnergyResidual,
+                std::abs(re)/std::max({1.,energyInventory,std::abs(energy),std::abs(work),bedLoss,viscosityLoss,implicitLoss}));
         }
     }
 
@@ -859,6 +981,13 @@ void InternalModeSolver::applyModeAdjustment()
         for (int k = 0; k < layers; ++k)
         {
             const size_t cell = static_cast<size_t>(mesh.cell(c, k));
+            if (m_options.auditMomentum) {
+                auto &audit = m_momentumAudit[static_cast<size_t>(c)];
+                const double mass=m_options.referenceDensity*mesh.cellVolume()[cell];
+                audit.modeImpulseX+=mass*correctionU; audit.modeImpulseY+=mass*correctionV;
+                audit.modeEnergy+=mass*(state.u[cell]*correctionU+state.v[cell]*correctionV+
+                                       .5*(correctionU*correctionU+correctionV*correctionV));
+            }
             state.u[cell] += correctionU;
             state.v[cell] += correctionV;
         }
@@ -1029,22 +1158,103 @@ void InternalModeSolver::diagnoseVerticalFlux(double dt)
     }
 }
 
-void InternalModeSolver::transportScalars(double dt)
+bool InternalModeSolver::scalarTraceSupported(int s, std::string &message) const
+{
+    if (!m_checkpointReady || !m_mesh || !m_species || s<0 || s>=m_species->count())
+        message="scalar trace requires an initialized solver and valid species";
+    else if (s==m_temperatureIndex || s==m_salinityIndex ||
+             m_species->definition(s).kind!=State::SpeciesKind::Pollutant)
+        message="scalar trace supports passive pollutants only; temperature, salinity and age derivatives are not qualified";
+    else if (m_options.advectionScheme!=Transport::AdvectionScheme::Upwind ||
+             m_options.horizontalDiffusivity!=0 || !m_reactions.empty() ||
+             m_settling.any() || m_transfers.count()>0 || !m_boundaryLinks.empty())
+        message="scalar trace requires upwind, zero horizontal diffusion, no reactions, settling, internal transfers or open boundaries";
+    else { message.clear();return true; }
+    return false;
+}
+
+bool InternalModeSolver::beginScalarTrace(int s, size_t maxSteps, std::string &message)
+{
+    if(m_recordReactive){message="end the reactive trace before starting a scalar trace";return false;}
+    if (!scalarTraceSupported(s,message)) return false;
+    if (maxSteps==0 || maxSteps>10000) { message="scalar trace step limit must lie in [1,10000]";return false; }
+    const auto values=m_state->speciesBlock(s);
+    for (size_t i=0;i<values.size();++i)
+        if (!std::isfinite(values[i]) || !(m_mesh->cellVolume()[i]>0)) {
+            message="scalar trace requires finite state and positive cell volumes";return false;
+        }
+    Transport::ScalarTrajectory next;
+    next.initial.assign(values.begin(),values.end());next.startTime=m_time;
+    m_scalarTrace=std::move(next);m_traceSpecies=s;m_traceLimit=maxSteps;
+    message.clear();return true;
+}
+
+bool InternalModeSolver::scalarTraceReady(std::string &message) const
+{
+    if (m_traceSpecies<0) return true;
+    if (!scalarTraceSupported(m_traceSpecies,message)) return false;
+    if (m_scalarTrace.count>=m_traceLimit) { message="scalar trace step limit reached; end recording or start a new trace";return false; }
+    const auto &expected=m_scalarTrace.head?m_scalarTrace.head->step.after:m_scalarTrace.initial;
+    const auto values=m_state->speciesBlock(m_traceSpecies);
+    const double time=m_scalarTrace.head?m_scalarTrace.head->step.time+m_scalarTrace.head->step.dt:m_scalarTrace.startTime;
+    if (m_time!=time || values.size()!=expected.size() || !std::equal(values.begin(),values.end(),expected.begin())) {
+        message="recorded scalar state or clock was changed outside the solver; start a new trace";return false;
+    }
+    for (double v:m_mesh->cellVolume()) if (!(v>0) || !std::isfinite(v)) {
+        message="scalar trace requires positive finite cell volumes";return false;
+    }
+    message.clear();return true;
+}
+
+bool InternalModeSolver::reactiveTraceSupported(std::string &message) const
+{
+    if(!m_checkpointReady || !m_mesh || !m_species || (!m_reactions.empty()&&!m_reactions.compiled()))
+        message="reactive trace needs an initialized solver and compiled reactions";
+    else if(m_options.advectionScheme!=Transport::AdvectionScheme::Upwind || m_options.horizontalDiffusivity!=0 ||
+        m_settling.any() || m_transfers.count()>0 || !m_boundaryLinks.empty() || m_reactions.usesLight())
+        message="reactive trace requires upwind, zero horizontal diffusion, no settling, transfers, open boundaries or self-shading";
+    else {
+        for(int s:m_reactions.reactingSpecies())if(s==m_temperatureIndex || s==m_salinityIndex ||
+            m_species->definition(s).kind==State::SpeciesKind::Age) {
+            message="reactive trace refuses temperature, salinity or age rate laws";return false;
+        }
+        message.clear();return true;
+    }
+    return false;
+}
+bool InternalModeSolver::beginReactiveTrace(size_t maxSteps,std::string &message)
+{
+    if(!reactiveTraceSupported(message))return false;
+    if(m_traceSpecies>=0 || !maxSteps || maxSteps>10000){message="reactive trace needs 1..10000 steps and no active scalar trace";return false;}
+    Transport::ReactiveTrajectory next;next.cells=m_state->cellCount();next.startTime=m_time;
+    next.constantNames=m_reactions.constantNames();next.constants=m_reactions.constantValues();
+    for(int s=0;s<m_species->count();++s)if(s!=m_temperatureIndex && s!=m_salinityIndex && m_species->definition(s).kind!=State::SpeciesKind::Age) {
+        next.species.push_back(s);const auto x=m_state->speciesBlock(s);next.initial.insert(next.initial.end(),x.begin(),x.end());
+    }
+    if(next.species.empty()){message="reactive trace needs at least one pollutant or MSX species";return false;}
+    for(double v:next.initial)if(!std::isfinite(v)){message="reactive trace requires finite concentrations";return false;}
+    for(double v:m_mesh->cellVolume())if(!(v>0) || !std::isfinite(v)){message="reactive trace requires wet positive-volume cells";return false;}
+    m_reactiveTrace=std::move(next);m_reactiveLimit=maxSteps;m_recordReactive=true;message.clear();return true;
+}
+bool InternalModeSolver::reactiveTraceReady(std::string &message) const
+{
+    if(!m_recordReactive)return true;if(!reactiveTraceSupported(message))return false;
+    if(m_reactiveTrace.count>=m_reactiveLimit){message="reactive trace step limit reached";return false;}
+    const auto &expected=m_reactiveTrace.head?m_reactiveTrace.head->step.after:m_reactiveTrace.initial;
+    size_t i=0;for(int s:m_reactiveTrace.species)for(double v:m_state->speciesBlock(s))
+        if(v!=expected[i++]){message="reactive state changed outside the solver; start a new trace";return false;}
+    if(m_reactions.constantValues()!=m_reactiveTrace.constants){message="reaction constants changed during a trace";return false;}
+    for(double v:m_mesh->cellVolume())if(!(v>0) || !std::isfinite(v)){message="reactive trace requires positive finite volumes";return false;}
+    message.clear();return true;
+}
+
+void InternalModeSolver::transportScalars(double dt,Transport::ReactiveStep *reactive)
 {
     const Mesh::LayeredMesh    &mesh       = *m_mesh;
-    const Mesh::HorizontalMesh &horizontal = mesh.horizontal();
     State::StateStore          &state      = *m_state;
 
     const int64_t columns = mesh.columnCount();
     const int     layers  = mesh.layerCount();
-
-    const std::vector<double>  &area            = horizontal.faceArea();
-    const std::vector<double>  &edgeLength      = horizontal.edgeLength();
-    const std::vector<double>  &edgeDistance    = horizontal.edgeCentroidDistance();
-    const std::vector<int64_t> &edgeLeft        = horizontal.edgeLeftFace();
-    const std::vector<int64_t> &edgeRight       = horizontal.edgeRightFace();
-    const std::vector<int64_t> &faceEdgeOffsets = horizontal.faceEdgeOffsets();
-    const std::vector<int64_t> &faceEdges       = horizontal.faceEdges();
 
     for (int s = 0; s < state.speciesCount(); ++s)
     {
@@ -1070,13 +1280,57 @@ void InternalModeSolver::transportScalars(double dt)
         applyBoundaryComposition(s);
 
         m_sources.inflowConcentration(mesh, s, m_temperatureIndex, m_sourceValue);
+        m_sources.scalarLoad(mesh, s, m_temperatureIndex, values, m_scalarLoad);
+        for (int i = 0; i < m_sources.count(); ++i) {
+            const auto &source = m_sources.source(i);
+            auto &flow = m_budget.flows[static_cast<size_t>(source.origin)];
+            const double value = source.discharge > 0 ?
+                (s == m_temperatureIndex ? source.temperature :
+                 static_cast<size_t>(s) < source.concentration.size() ? source.concentration[s] : 0) :
+                m_sources.weightedMean(mesh, i, values);
+            (source.discharge > 0 ? flow.scalarIn : flow.scalarOut)[s] +=
+                std::abs(source.discharge) * dt * value;
+        }
 
+        const bool audit = !m_heatAudit.initial.empty() && s == m_temperatureIndex;
+        std::unique_ptr<Transport::ScalarTraceNode> trace;
+        if (s==m_traceSpecies) {
+            trace=std::make_unique<Transport::ScalarTraceNode>();
+            trace->step=Transport::ScalarStep::capture(mesh,m_oldVolume,m_edgeLayerFlux,
+                m_verticalFlux,m_sources,s,values,m_time,dt);
+            trace->previous=m_scalarTrace.head;
+        }
+        Transport::ScalarStep *reactiveRecord=nullptr;
+        if(reactive) {
+            const auto found=std::find(m_reactiveTrace.species.begin(),m_reactiveTrace.species.end(),s);
+            if(found!=m_reactiveTrace.species.end()) {
+                reactiveRecord=&reactive->transport[static_cast<size_t>(found-m_reactiveTrace.species.begin())];
+                *reactiveRecord=Transport::ScalarStep::capture(mesh,m_oldVolume,m_edgeLayerFlux,m_verticalFlux,m_sources,s,values,m_time,dt);
+            }
+        }
         m_transport.advect(mesh, m_oldVolume, m_edgeLayerFlux, m_verticalFlux,
                            m_cellSource, m_sourceValue, dt, m_options.advectionScheme,
-                           values);
+                           values, m_scalarLoad, audit ? &m_advectionAudit : nullptr);
+        const double capacity = m_options.referenceDensity * m_options.heatCapacity;
+        if (audit) {
+            for (size_t i = 0; i < values.size(); ++i) {
+                m_heatAudit.horizontalAdvection[i] += capacity * m_advectionAudit.horizontal[i];
+                m_heatAudit.verticalAdvection[i] += capacity * m_advectionAudit.vertical[i];
+                m_heatAudit.sources[i] += capacity * m_advectionAudit.sources[i];
+            }
+            for (size_t i = 0; i < m_advectionAudit.interfaceFlux.size(); ++i)
+                m_heatAudit.upwardAdvection[i] += dt * capacity * m_advectionAudit.interfaceFlux[i];
+            m_heatAuditWork.assign(values.begin(), values.end());
+        }
 
         if (m_options.horizontalDiffusivity > 0.0)
             applyHorizontalDiffusion(dt, values);
+        if (audit) {
+            for (size_t i = 0; i < values.size(); ++i)
+                m_heatAudit.horizontalDiffusion[i] += capacity * mesh.cellVolume()[i] *
+                    (values[i] - m_heatAuditWork[i]);
+            m_heatAuditWork.assign(values.begin(), values.end());
+        }
 
         // ── Implicit vertical diffusion, one tridiagonal solve per column ─
         FVQual_PARALLEL_FOR
@@ -1104,8 +1358,10 @@ void InternalModeSolver::transportScalars(double dt)
                     const size_t above = static_cast<size_t>(mesh.cell(c, k - 1));
                     const double spacing =
                         0.5 * (mesh.thickness()[above] + mesh.thickness()[cell]);
-                    lower = -dt * m_kz[static_cast<size_t>(mesh.interfaceSlot(c, k))] /
-                            (thickness * std::max(spacing, 1.0e-12));
+                    const size_t face = static_cast<size_t>(mesh.interfaceSlot(c, k));
+                    lower = -dt * m_kz[face] / (thickness * std::max(spacing, 1.0e-12));
+                    if (mesh.hasHypsography())
+                        lower = ColumnPhysics::exchange(dt,m_kz[face],mesh.interfaceArea()[face],mesh.cellVolume()[cell],spacing);
                 }
 
                 if (k + 1 < layers)
@@ -1113,14 +1369,22 @@ void InternalModeSolver::transportScalars(double dt)
                     const size_t below = static_cast<size_t>(mesh.cell(c, k + 1));
                     const double spacing =
                         0.5 * (mesh.thickness()[cell] + mesh.thickness()[below]);
-                    upper = -dt * m_kz[static_cast<size_t>(mesh.interfaceSlot(c, k + 1))] /
-                            (thickness * std::max(spacing, 1.0e-12));
+                    const size_t face = static_cast<size_t>(mesh.interfaceSlot(c, k + 1));
+                    upper = -dt * m_kz[face] / (thickness * std::max(spacing, 1.0e-12));
+                    if (mesh.hasHypsography())
+                        upper = ColumnPhysics::exchange(dt,m_kz[face],mesh.interfaceArea()[face],mesh.cellVolume()[cell],spacing);
                 }
 
                 lowerBuf[k]    = lower;
                 upperBuf[k]    = upper;
                 diagonalBuf[k] = 1.0 - lower - upper;
                 rhsBuf[k]      = values[cell];
+                if (trace) {
+                    trace->step.lower[cell]=lower;
+                    trace->step.diagonal[cell]=diagonalBuf[k];
+                    trace->step.upper[cell]=upper;
+                }
+                if(reactiveRecord){reactiveRecord->lower[cell]=lower;reactiveRecord->diagonal[cell]=diagonalBuf[k];reactiveRecord->upper[cell]=upper;}
             }
 
             solveTridiagonal(layers, lowerBuf, diagonalBuf, upperBuf, rhsBuf,
@@ -1129,64 +1393,24 @@ void InternalModeSolver::transportScalars(double dt)
             for (int k = 0; k < layers; ++k)
                 values[static_cast<size_t>(mesh.cell(c, k))] = solutionBuf[k];
         }
-    }
-}
-
-void InternalModeSolver::applyHorizontalDiffusion(double dt, std::span<double> values)
-{
-    const Mesh::LayeredMesh    &mesh       = *m_mesh;
-    const Mesh::HorizontalMesh &horizontal = mesh.horizontal();
-
-    const int     layers  = mesh.layerCount();
-    const int64_t columns = mesh.columnCount();
-
-    const std::vector<double>  &edgeLength      = horizontal.edgeLength();
-    const std::vector<double>  &edgeDistance    = horizontal.edgeCentroidDistance();
-    const std::vector<int64_t> &edgeLeft        = horizontal.edgeLeftFace();
-    const std::vector<int64_t> &edgeRight       = horizontal.edgeRightFace();
-    const std::vector<int64_t> &faceEdgeOffsets = horizontal.faceEdgeOffsets();
-    const std::vector<int64_t> &faceEdges       = horizontal.faceEdges();
-
-    for (int64_t i = 0; i < mesh.cellCount(); ++i)
-        m_scalarWork[static_cast<size_t>(i)] = values[static_cast<size_t>(i)];
-
-    FVQual_PARALLEL_FOR
-    for (int64_t c = 0; c < columns; ++c)
-    {
-        const int64_t begin = faceEdgeOffsets[static_cast<size_t>(c)];
-        const int64_t end   = faceEdgeOffsets[static_cast<size_t>(c) + 1];
-
-        for (int k = 0; k < layers; ++k)
-        {
-            const size_t cell   = static_cast<size_t>(mesh.cell(c, k));
-            const double volume = mesh.cellVolume()[cell];
-
-            if (volume <= 0.0)
-                continue;
-
-            double inflow = 0.0;
-
-            for (int64_t index = begin; index < end; ++index)
-            {
-                const size_t  ei    = static_cast<size_t>(faceEdges[static_cast<size_t>(index)]);
-                const bool    owned = edgeLeft[ei] == c;
-                const int64_t other = owned ? edgeRight[ei] : edgeLeft[ei];
-
-                if (other == Mesh::kNoFace || edgeDistance[ei] <= 0.0)
-                    continue;
-
-                const size_t neighbour = static_cast<size_t>(mesh.cell(other, k));
-
-                const double faceThickness =
-                    0.5 * (mesh.thickness()[cell] + mesh.thickness()[neighbour]);
-
-                inflow += m_options.horizontalDiffusivity * edgeLength[ei] *
-                          faceThickness *
-                          (m_scalarWork[neighbour] - m_scalarWork[cell]) /
-                          edgeDistance[ei];
-            }
-
-            values[cell] += dt * inflow / volume;
+        if (trace) {
+            trace->step.after.assign(values.begin(),values.end());
+            m_scalarTrace.head=std::shared_ptr<const Transport::ScalarTraceNode>(std::move(trace));
+            ++m_scalarTrace.count;
+        }
+        if(reactiveRecord)reactiveRecord->after.assign(values.begin(),values.end());
+        if (audit) {
+            for (size_t i = 0; i < values.size(); ++i)
+                m_heatAudit.verticalDiffusion[i] += capacity * mesh.cellVolume()[i] *
+                    (values[i] - m_heatAuditWork[i]);
+            for (int64_t c = 0; c < columns; ++c)
+                for (int k = 1; k < layers; ++k) {
+                    const size_t above = mesh.cell(c,k-1), below = mesh.cell(c,k);
+                    const size_t face = mesh.interfaceSlot(c,k);
+                    const double spacing = .5 * (mesh.thickness()[above] + mesh.thickness()[below]);
+                    m_heatAudit.upwardDiffusion[face] += dt * capacity * m_kz[face] *
+                        mesh.interfaceArea()[face] * (values[below]-values[above]) / std::max(spacing,1e-12);
+                }
         }
     }
 }
@@ -1217,9 +1441,12 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
                 continue;
 
             state.speciesAt(m_temperatureIndex, static_cast<int64_t>(surface)) +=
-                dt * m_options.surfaceHeatFlux / (capacity * thickness);
+                dt * m_options.surfaceHeatFlux / (capacity * thickness) *
+                (mesh.hasHypsography() ? mesh.interfaceArea()[static_cast<size_t>(mesh.interfaceSlot(c,0))] * thickness / mesh.cellVolume()[surface] : 1.0);
         }
 
+        for (int64_t c = 0; c < mesh.columnCount(); ++c)
+            m_budget.surfaceHeat[5] += dt * mesh.interfaceArea()[static_cast<size_t>(mesh.interfaceSlot(c,0))] * m_options.surfaceHeatFlux;
         return;
     }
 
@@ -1248,6 +1475,7 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
 
     const std::vector<double> &interface = m_solar.interfaceIrradiance();
 
+    std::vector<HeatFluxTerms> columnTerms(static_cast<size_t>(mesh.columnCount()));
     FVQual_PARALLEL_FOR
     for (int64_t c = 0; c < mesh.columnCount(); ++c)
     {
@@ -1259,6 +1487,7 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
             surfaceHeatFlux(m_meteorology.at(c),
                             state.speciesAt(m_temperatureIndex,
                                             static_cast<int64_t>(surface)));
+        columnTerms[c] = terms;
 
         for (int k = 0; k < layers; ++k)
         {
@@ -1279,8 +1508,21 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
             if (k == 0)
                 flux += terms.surfaceNet();
 
-            state.speciesAt(m_temperatureIndex, static_cast<int64_t>(cell)) +=
-                dt * flux / (capacity * thickness);
+            if (mesh.hasHypsography()) {
+                // Irradiance is W/m2; transport energy in watts across each
+                // interface. Rays intercepted by sloping bed/banks follow the
+                // same immediate-to-water absorption policy as the bottom.
+                const size_t top = static_cast<size_t>(mesh.interfaceSlot(c,k));
+                const size_t bottom = static_cast<size_t>(mesh.interfaceSlot(c,k+1));
+                double watts = interface[top] * mesh.interfaceArea()[top] -
+                               interface[bottom] * mesh.interfaceArea()[bottom];
+                if (k == 0) watts += terms.surfaceNet() * mesh.interfaceArea()[top];
+                state.speciesAt(m_temperatureIndex, static_cast<int64_t>(cell)) +=
+                    dt * watts / (capacity * mesh.cellVolume()[cell]);
+            } else {
+                state.speciesAt(m_temperatureIndex, static_cast<int64_t>(cell)) +=
+                    dt * flux / (capacity * thickness);
+            }
         }
 
         // Sunlight reaching the bed is absorbed there rather than lost. Adding
@@ -1295,9 +1537,46 @@ void InternalModeSolver::applySurfaceHeatFlux(double dt)
         if (toBed > 0.0 && bedThickness > 0.0)
         {
             state.speciesAt(m_temperatureIndex, static_cast<int64_t>(bed)) +=
-                dt * toBed / (capacity * bedThickness);
+                dt * toBed / (capacity * bedThickness) *
+                (mesh.hasHypsography() ? mesh.interfaceArea()[static_cast<size_t>(mesh.interfaceSlot(c,layers))] * bedThickness / mesh.cellVolume()[bed] : 1.0);
         }
     }
+    for (int64_t c = 0; c < mesh.columnCount(); ++c) {
+        const auto &t = columnTerms[c];
+        const double energy = dt * mesh.interfaceArea()[static_cast<size_t>(mesh.interfaceSlot(c,0))];
+        const std::array<double, 5> terms{t.netShortwave, t.longwaveDown, t.longwaveUp, t.latent, t.sensible};
+        for (size_t i = 0; i < terms.size(); ++i) m_budget.surfaceHeat[i] += energy * terms[i];
+    }
+}
+
+void InternalModeSolver::resetBudget()
+{
+    m_budget = {};
+    if (!m_mesh || !m_species || !m_state) return;
+    const size_t count = static_cast<size_t>(m_species->count());
+    m_budget.initialWater = m_mesh->totalVolume();
+    m_budget.initialScalar.resize(count);
+    m_budget.settling.assign(count, 0); m_budget.reactions.assign(count, 0);
+    for (int s = 0; s < m_species->count(); ++s) m_budget.initialScalar[s] = totalSpeciesMass(s);
+    for (auto &flow : m_budget.flows) {
+        flow.scalarIn.assign(count, 0); flow.scalarOut.assign(count, 0);
+    }
+}
+
+double InternalModeSolver::waterBudgetResidual() const
+{
+    double expected = m_budget.initialWater;
+    for (const auto &flow : m_budget.flows) expected += flow.waterIn - flow.waterOut;
+    return m_mesh->totalVolume() - expected;
+}
+
+double InternalModeSolver::scalarBudgetResidual(int species) const
+{
+    double expected = m_budget.initialScalar.at(species) + m_budget.settling.at(species) + m_budget.reactions.at(species);
+    for (const auto &flow : m_budget.flows) expected += flow.scalarIn.at(species) - flow.scalarOut.at(species);
+    if (species == m_temperatureIndex)
+        for (double energy : m_budget.surfaceHeat) expected += energy / (m_options.referenceDensity * m_options.heatCapacity);
+    return totalSpeciesMass(species) - expected;
 }
 
 void InternalModeSolver::updateCellDepth()
@@ -1374,6 +1653,7 @@ bool InternalModeSolver::bindOpenBoundaries(Forcing::Placement placement,
         if (link == m_boundaryLinks.end())
         {
             Forcing::Source source;
+            source.origin = Forcing::SourceOrigin::Boundary;
             source.column              = column;
             source.discharge           = 0.0;
             source.placement           = placement;
@@ -1573,6 +1853,51 @@ bool InternalModeSolver::compileReactions(std::string &message)
     return m_reactions.compile(*m_species, message);
 }
 
+void InternalModeSolver::setOperationControls(std::vector<Forcing::OperationControl> controls)
+{
+    m_operationControls = std::move(controls);
+    std::string message;
+    if (!applyOperationControls(message)) throw std::invalid_argument(message);
+}
+
+bool InternalModeSolver::applyOperationControls(std::string &message)
+{
+    using K = Forcing::OperationControl::Kind;
+    for (const auto &c : m_operationControls) {
+        const auto found = std::upper_bound(c.times.begin(), c.times.end(), m_time + 1e-12);
+        const size_t slot = found == c.times.begin() ? 0 : static_cast<size_t>(found - c.times.begin() - 1);
+        if (c.kind == K::Meteorology) { m_meteorology = c.weather.at(slot); continue; }
+        double value = c.values.at(slot);
+        bool ok = true;
+        switch (c.kind) {
+        case K::SourceDischarge: ok = m_sources.setDischarge(c.index, value, message); break;
+        case K::SourceValue: ok = m_sources.setInflowValue(c.index, c.species, m_temperatureIndex, value, message); break;
+        case K::StructureOpening: ok = m_structures.setOpening(c.index, value, message); break;
+        case K::StructureTailwater: ok = m_structures.setTailwater(c.index, value, message); break;
+        case K::StructureDemand: ok = m_structures.setSchedule(c.index, value, message); break;
+        case K::GroupDemand: ok = m_groups.setDemand(c.index, value, message); break;
+        case K::GroupTemperature: ok = m_groups.setTarget(c.index, value, message); break;
+        case K::TransferDischarge: ok = m_transfers.setDischarge(c.index, value, message); break;
+        case K::BoundaryDischarge: ok = m_external.setBoundaryDischarge(c.index, value, message); break;
+        case K::BoundaryStage: ok = m_external.setBoundaryStage(c.index, value, message); break;
+        case K::BoundaryValue: ok = setBoundaryValue(c.index, c.speciesId, value, message); break;
+        case K::Meteorology: break;
+        }
+        if (!ok) return false;
+    }
+    return true;
+}
+
+double InternalModeSolver::nextOperationTime() const
+{
+    double next = std::numeric_limits<double>::infinity();
+    for (const auto &c : m_operationControls) {
+        auto found = std::upper_bound(c.times.begin(), c.times.end(), m_time + 1e-12);
+        if (found != c.times.end()) next = std::min(next, *found);
+    }
+    return next;
+}
+
 bool InternalModeSolver::step(double dt, std::string &message)
 {
     if (m_mesh == nullptr)
@@ -1581,11 +1906,14 @@ bool InternalModeSolver::step(double dt, std::string &message)
         return false;
     }
 
-    if (!(dt > 0.0))
+    if (!(dt > 0.0) || !std::isfinite(dt))
     {
         message = "internal time step must be positive";
         return false;
     }
+
+    if (!scalarTraceReady(message)) return false;
+    if (!reactiveTraceReady(message)) return false;
 
     // Checked here rather than at the point of use, so a misconfigured network
     // refuses the step instead of failing halfway through one and leaving the
@@ -1597,7 +1925,75 @@ bool InternalModeSolver::step(double dt, std::string &message)
         return false;
     }
 
+    if (nextOperationTime() < m_time + dt - 1e-12) return advance(dt, message);
+    if (!applyOperationControls(message)) return false;
+
     Mesh::LayeredMesh &mesh = *m_mesh;
+
+    // Rate and place current controls before checking gross turnover. This
+    // also covers the first step and newly activated scheduled pumps/transfers.
+    updateDensity();
+    // Forcing: transfers, outlet groups, structures, and source placement. In
+    // its own scope so the timer records even on the early-return paths below.
+    {
+        ScopedTimer timer(m_profile.forcing);
+
+    // 3a--. Internal transfers move water between columns; their two halves are
+    //       written together so they cannot drift apart into a net source.
+    if (m_transfers.count() > 0 && !m_transfers.updateDischarges(m_sources, message))
+        return false;
+
+    // 3a-. Operate the multi-port outlets first: the group decides how the
+    //      scheduled release is split between ports, then the ports rate
+    //      themselves against that schedule. The order matters — a port's
+    //      capacity limit has to be applied to a demand that already exists.
+    if (m_groups.count() > 0 && m_temperatureIndex >= 0 &&
+        !m_groups.update(mesh, m_sources, m_state->density,
+                         m_state->speciesBlock(m_temperatureIndex), m_options.gravity,
+                         m_options.referenceDensity, m_structures, message))
+    {
+        return false;
+    }
+
+    // 3a. Let the outlet works read the level they are about to release
+    //     against. A weir whose reservoir has drawn down passes less than it
+    //     did last step, and that feedback is the difference between a model
+    //     that drains to its crest and stops and one that empties itself.
+    //
+    //     This is the opening rating only. The feedback itself lives in the
+    //     external subcycle, where the head actually moves — see the updater
+    //     installed in initialize() and StructureSet::update().
+    if (m_structures.count() > 0 &&
+        !m_structures.update(m_external.surfaceElevation(), m_sources, message))
+    {
+        return false;
+    }
+
+    // 3b. Place the inflows and withdrawals against the *current* density
+    //     field, then give the external mode exactly the column totals that
+    //     were distributed over the cells. The two must agree to the bit: the
+    //     free-surface continuity residual is the difference between what the
+    //     surface thinks happened and what the layers think happened, and a
+    //     source counted once here and differently there would show up there
+    //     first.
+    m_sources.distribute(mesh, m_state->density, m_options.gravity,
+                         m_options.referenceDensity, m_cellSource, m_columnSource);
+
+    if (!m_external.setColumnSource(m_columnSource, message))
+        return false;
+    }
+
+    const double withdrawalLimit = m_sources.withdrawalTimeStep(mesh, m_state->density,
+        m_options.gravity, m_options.referenceDensity, m_options.cflNumber);
+    if (dt > withdrawalLimit * (1.0 + 1e-12)) return advance(dt, message);
+    // Head-rated structures and open boundaries can change within the external
+    // subcycle. Keep a rollback only for those paths and retry if actual mean
+    // depletion exceeds the opening estimate.
+    std::shared_ptr<const InternalModeCheckpoint> turnoverCheckpoint;
+    if (m_structures.count() > 0 || !m_boundaryLinks.empty()) {
+        turnoverCheckpoint = checkpoint(message);
+        if (!turnoverCheckpoint) return false;
+    }
 
     ScopedTimer stepTimer(m_profile.total);
 
@@ -1647,6 +2043,7 @@ bool InternalModeSolver::step(double dt, std::string &message)
     }
 
     // 2. Geometry before the surface moves — transport needs both volumes.
+    if (!m_budgetStarted) { resetBudget(); m_budgetStarted = true; }
     m_oldVolume = mesh.cellVolume();
 
     // 3. Hand the external mode its share of the baroclinic forcing, depth
@@ -1698,55 +2095,6 @@ bool InternalModeSolver::step(double dt, std::string &message)
         return false;
     }
 
-    // Forcing: transfers, outlet groups, structures, and source placement. In
-    // its own scope so the timer records even on the early-return paths below.
-    {
-        ScopedTimer timer(m_profile.forcing);
-
-    // 3a--. Internal transfers move water between columns; their two halves are
-    //       written together so they cannot drift apart into a net source.
-    if (m_transfers.count() > 0 && !m_transfers.updateDischarges(m_sources, message))
-        return false;
-
-    // 3a-. Operate the multi-port outlets first: the group decides how the
-    //      scheduled release is split between ports, then the ports rate
-    //      themselves against that schedule. The order matters — a port's
-    //      capacity limit has to be applied to a demand that already exists.
-    if (m_groups.count() > 0 && m_temperatureIndex >= 0 &&
-        !m_groups.update(mesh, m_sources, m_state->density,
-                         m_state->speciesBlock(m_temperatureIndex), m_options.gravity,
-                         m_options.referenceDensity, m_structures, message))
-    {
-        return false;
-    }
-
-    // 3a. Let the outlet works read the level they are about to release
-    //     against. A weir whose reservoir has drawn down passes less than it
-    //     did last step, and that feedback is the difference between a model
-    //     that drains to its crest and stops and one that empties itself.
-    //
-    //     This is the opening rating only. The feedback itself lives in the
-    //     external subcycle, where the head actually moves — see the updater
-    //     installed in initialize() and StructureSet::update().
-    if (m_structures.count() > 0 &&
-        !m_structures.update(m_external.surfaceElevation(), m_sources, message))
-    {
-        return false;
-    }
-
-    // 3b. Place the inflows and withdrawals against the *current* density
-    //     field, then give the external mode exactly the column totals that
-    //     were distributed over the cells. The two must agree to the bit: the
-    //     free-surface continuity residual is the difference between what the
-    //     surface thinks happened and what the layers think happened, and a
-    //     source counted once here and differently there would show up there
-    //     first.
-    m_sources.distribute(mesh, m_state->density, m_options.gravity,
-                         m_options.referenceDensity, m_cellSource, m_columnSource);
-
-    if (!m_external.setColumnSource(m_columnSource, message))
-        return false;
-    }
 
     // 4. External mode, accumulating the transport it delivers.
     m_structureVolume.assign(static_cast<size_t>(m_structures.count()), 0.0);
@@ -1796,6 +2144,17 @@ bool InternalModeSolver::step(double dt, std::string &message)
                              m_options.referenceDensity, m_cellSource, m_columnSource);
     }
 
+    const double actualWithdrawalLimit = m_sources.withdrawalTimeStep(mesh, m_state->density,
+        m_options.gravity, m_options.referenceDensity, m_options.cflNumber);
+    if (turnoverCheckpoint && dt > actualWithdrawalLimit * (1.0 + 1e-12)) {
+        if (!restoreCheckpoint(*turnoverCheckpoint, message)) return false;
+        const double ceiling = m_options.maxTimeStep;
+        m_options.maxTimeStep = std::min(ceiling, actualWithdrawalLimit);
+        const bool ok = advance(dt, message);
+        m_options.maxTimeStep = ceiling;
+        return ok;
+    }
+
     // 5. Internal momentum on the old geometry (advection uses the previous
     //    step's fluxes, which is what makes the scheme explicit).
     {
@@ -1821,11 +2180,39 @@ bool InternalModeSolver::step(double dt, std::string &message)
         diagnoseVerticalFlux(dt);
     }
 
+    for (int i = 0; i < m_sources.count(); ++i) {
+        const auto &source = m_sources.source(i);
+        auto &flow = m_budget.flows[static_cast<size_t>(source.origin)];
+        (source.discharge > 0 ? flow.waterIn : flow.waterOut) += std::abs(source.discharge) * dt;
+    }
+
     // 8. Scalars ride the reconciled fluxes.
+    std::unique_ptr<Transport::ReactiveTraceNode> reactive;
+    if(m_recordReactive) {
+        reactive=std::make_unique<Transport::ReactiveTraceNode>();reactive->previous=m_reactiveTrace.head;
+        for(int s:m_reactiveTrace.species) {
+            Transport::ScalarStep record;record.time=m_time;record.dt=dt;record.layers=mesh.layerCount();
+            const auto values=m_state->speciesBlock(s);record.before.assign(values.begin(),values.end());record.after=record.before;
+            record.lower.assign(values.size(),0);record.upper.assign(values.size(),0);record.diagonal.assign(values.size(),1);
+            for(size_t i=0;i<values.size();++i)record.advection.push_back({i,i,1});
+            reactive->step.transport.push_back(std::move(record));
+        }
+    }
     {
         ScopedTimer timer(m_profile.transport);
-        transportScalars(dt);
+        transportScalars(dt,reactive?&reactive->step:nullptr);
+        if (!m_heatAudit.initial.empty()) {
+            const auto values = m_state->speciesBlock(m_temperatureIndex);
+            m_heatAuditWork.assign(values.begin(), values.end());
+        }
         applySurfaceHeatFlux(dt);
+        if (!m_heatAudit.initial.empty()) {
+            const auto values = m_state->speciesBlock(m_temperatureIndex);
+            const double capacity = m_options.referenceDensity * m_options.heatCapacity;
+            for (size_t i = 0; i < values.size(); ++i)
+                m_heatAudit.surface[i] += capacity * mesh.cellVolume()[i] * (values[i]-m_heatAuditWork[i]);
+            m_heatAuditWork.assign(values.begin(), values.end());
+        }
     }
 
     // 8b. Particulates sink. Before the reactions rather than after, so a
@@ -1833,7 +2220,10 @@ bool InternalModeSolver::step(double dt, std::string &message)
     if (m_settling.any())
     {
         ScopedTimer timer(m_profile.settling);
+        std::vector<double> before(static_cast<size_t>(m_species->count()));
+        for (int s = 0; s < m_species->count(); ++s) before[s] = totalSpeciesMass(s);
         m_settling.apply(mesh, *m_state, dt);
+        for (int s = 0; s < m_species->count(); ++s) m_budget.settling[s] += totalSpeciesMass(s) - before[s];
     }
 
     // 9. Reactions act on the transported field: first-order Lie splitting.
@@ -1860,13 +2250,47 @@ bool InternalModeSolver::step(double dt, std::string &message)
         fields.depth     = m_cellDepth;
         fields.thickness = mesh.thickness();
 
+        std::vector<double> surfaceAreaPerVolume, bedAreaPerVolume;
+        if (mesh.hasHypsography() && m_reactions.usesCellPosition())
+        {
+            surfaceAreaPerVolume.resize(static_cast<size_t>(mesh.cellCount()));
+            bedAreaPerVolume.resize(static_cast<size_t>(mesh.cellCount()));
+            for (int64_t c = 0; c < mesh.columnCount(); ++c)
+                for (int k = 0; k < mesh.layerCount(); ++k)
+                {
+                    const size_t cell = static_cast<size_t>(mesh.cell(c, k));
+                    const double volume = mesh.cellVolume()[cell];
+                    surfaceAreaPerVolume[cell] = volume > 0.0
+                        ? mesh.interfaceArea()[mesh.interfaceSlot(c, k)] / volume : 0.0;
+                    bedAreaPerVolume[cell] = volume > 0.0
+                        ? mesh.interfaceArea()[mesh.interfaceSlot(c, k+1)] / volume : 0.0;
+                }
+            fields.surfaceAreaPerVolume = surfaceAreaPerVolume;
+            fields.bedAreaPerVolume = bedAreaPerVolume;
+        }
+
+        std::vector<double> before(static_cast<size_t>(m_species->count()));
+        for (int s = 0; s < m_species->count(); ++s) before[s] = totalSpeciesMass(s);
+        if(reactive)reactive->step.reaction=Kinetics::ReactionStep::capture(m_reactions,*m_species,*m_state,dt,fields,m_cellPosition);
         if (!m_reactions.integrate(*m_species, *m_state, m_state->cellCount(), dt,
                                    message, fields, m_cellPosition))
         {
             return false;
         }
+        for (int s = 0; s < m_species->count(); ++s) m_budget.reactions[s] += totalSpeciesMass(s) - before[s];
+    }
+    if(reactive) {
+        if(m_reactions.empty())reactive->step.reaction=Kinetics::ReactionStep::capture(m_reactions,*m_species,*m_state,dt,{},{});
+        for(int s:m_reactiveTrace.species){const auto v=m_state->speciesBlock(s);reactive->step.after.insert(reactive->step.after.end(),v.begin(),v.end());}
+        m_reactiveTrace.head=std::shared_ptr<const Transport::ReactiveTraceNode>(std::move(reactive));++m_reactiveTrace.count;
     }
 
+    if (!m_heatAudit.initial.empty()) {
+        const auto values = m_state->speciesBlock(m_temperatureIndex);
+        const double capacity = m_options.referenceDensity * m_options.heatCapacity;
+        for (size_t i = 0; i < values.size(); ++i)
+            m_heatAudit.other[i] += capacity * mesh.cellVolume()[i] * (values[i]-m_heatAuditWork[i]);
+    }
     updateDensity();
 
     m_time += dt;
@@ -1895,7 +2319,7 @@ bool InternalModeSolver::advance(double duration, std::string &message)
         return false;
     }
 
-    if (duration < 0.0)
+    if (duration < 0.0 || !std::isfinite(duration))
     {
         message = "advance duration must be non-negative";
         return false;
@@ -1906,7 +2330,7 @@ bool InternalModeSolver::advance(double duration, std::string &message)
 
     while (m_time < target - 1.0e-12)
     {
-        const double dt = std::min(stableTimeStep(), target - m_time);
+        const double dt = std::min({stableTimeStep(), target - m_time, nextOperationTime() - m_time});
 
         if (dt <= 0.0)
             break;
@@ -1926,6 +2350,12 @@ bool InternalModeSolver::advance(double duration, std::string &message)
 
 double InternalModeSolver::totalSpeciesMass(int species) const
 {
+    if (m_species->definition(species).kind == State::SpeciesKind::MsxBenthic) {
+        double amount = 0;
+        for (int64_t c = 0; c < m_mesh->columnCount(); ++c)
+            amount += m_state->speciesAt(species, m_mesh->cell(c, m_mesh->layerCount()-1)) * m_mesh->horizontal().faceArea()[c];
+        return amount;
+    }
     return m_state->totalMass(species, *m_mesh);
 }
 
