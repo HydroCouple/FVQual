@@ -92,6 +92,12 @@ target_compile_features(fvqual_core PUBLIC cxx_std_20)
 # The C API is exported from this library; the build-side define flips the
 # Windows dllexport/dllimport switch (fvqual_engine.h).
 target_compile_definitions(fvqual_core PRIVATE FVQual_CAPI_BUILD)
+# A static library has nothing to import from, so its users must not see the
+# C API as dllimport.
+get_target_property(_fvqual_core_type fvqual_core TYPE)
+if(_fvqual_core_type STREQUAL "STATIC_LIBRARY")
+    target_compile_definitions(fvqual_core PUBLIC FVQual_CAPI_STATIC)
+endif()
 
 if(FVQual_USE_NETCDF)
     target_compile_definitions(fvqual_core PRIVATE FVQual_HAVE_NETCDF)

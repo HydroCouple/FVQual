@@ -39,8 +39,12 @@ extern "C" {
 
 /* ── Export macro ──────────────────────────────────────────────────────── */
 
+/* FVQual_CAPI_STATIC comes with a static fvqual_core (src/CMakeLists.txt):
+ * there is no DLL to import the functions from. */
 #if defined(_WIN32) || defined(__CYGWIN__)
-#  ifdef FVQual_CAPI_BUILD
+#  if defined(FVQual_CAPI_STATIC)
+#    define FVQual_CAPI
+#  elif defined(FVQual_CAPI_BUILD)
 #    define FVQual_CAPI __declspec(dllexport)
 #  else
 #    define FVQual_CAPI __declspec(dllimport)
