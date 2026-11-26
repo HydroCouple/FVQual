@@ -102,9 +102,14 @@ TEST(FVQualForcingArguments, AMetSeriesCoolsTheWaterWhenNoInputIsWired)
 TEST(FVQualForcingArguments, AKineticsDeckRegistersItsSpeciesAndReacts)
 {
     const std::string deck =
-        (std::filesystem::path(FVQual_TEST_OUTPUT_DIR) / "decay.rxn")
+        (std::filesystem::path(FVQual_TEST_OUTPUT_DIR) / "kinetics_decay.rxn")
             .string();
-    ASSERT_TRUE(std::filesystem::exists(deck)) << deck;
+    {
+        std::ofstream file(deck);
+        file << "[SPECIES]\n   X    g/m3   7.0\n"
+                "[CONSTANTS]\n   k    3.0/86400\n"
+                "[RATES]\n   X    WATER   0 - k * X\n";
+    }
 
     FVQualComponent component("fvqual.kinetics");
     setKineticsFile(component, deck);
@@ -125,7 +130,7 @@ TEST(FVQualForcingArguments, AKineticsDeckRegistersItsSpeciesAndReacts)
     }
     ASSERT_EQ(component.status(), ComponentStatus::Done);
 
-    // decay.rxn: X starts at 7 g/m3 with dX/dt = -k X, k = 3/day, run for
+    // The deck: X starts at 7 g/m3 with dX/dt = -k X, k = 3/day, run for
     // one day: 7 e^-3 ~ 0.349. A configure() that installed nothing would
     // leave 7 everywhere.
     const auto block = component.state().speciesBlock(1);
