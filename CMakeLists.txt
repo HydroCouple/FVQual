@@ -105,10 +105,12 @@ endif()
 
 # Windows has no rpath: an executable finds the SDK's DLLs only next to it or
 # on PATH, so copy them beside each FVQual executable (as the SDK does for its
-# own tests).
+# own tests). The copy runs before the link: vcpkg's deployment runs after it
+# and reaches the ports the SDK's DLLs need only through SDK DLLs already
+# beside the executable.
 function(fvqual_colocate_runtime_dlls target)
     if(WIN32)
-        add_custom_command(TARGET ${target} POST_BUILD
+        add_custom_command(TARGET ${target} PRE_LINK
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
             COMMAND_EXPAND_LISTS)
