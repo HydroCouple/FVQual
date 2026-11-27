@@ -37,6 +37,9 @@ INPUT                  = @CMAKE_SOURCE_DIR@/include \
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = @CMAKE_SOURCE_DIR@/README.md
 FILE_PATTERNS          = *.h *.hpp *.cpp *.c *.md
+# The Markdown pages pass through repo_links_filter.py, which points links to repository
+# files the site does not host (CMakeLists.txt, examples/...) at GitHub.
+FILTER_PATTERNS        = "*.md=python3 @CMAKE_CURRENT_SOURCE_DIR@/repo_links_filter.py"
 
 # Interface classes are named IPressureClosure, ITransportEngine and so on;
 # stripping the prefix keeps the alphabetical index usable.
